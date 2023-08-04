@@ -569,3 +569,4 @@ end fps = 2
 
 # belief_history_rand, state_history_rand, action_history_rand, reward_history_rand, total_reward_rand = run_simulation_random_policy(pomdp, b0, s0, rng)
 # belief_history, state_history, action_history, reward_history, total_reward = run_simulation_new(pomdp, b0, s0, rng)
+mynumber = 5
