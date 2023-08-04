@@ -18,6 +18,7 @@ By: Yasmine Alonso with assistance from Mykel Kochenderfer, Mansur Arief, and An
     using LinearAlgebra
     using Statistics
     using QMDP
+    using D3Trees
 
 
 
@@ -62,7 +63,7 @@ rng = MersenneTwister(1)
     γ = 0.9
     n_deposits = 4 
     bin_edges = [0.25, 0.5, 0.75]  # Used to discretize observations
-    cdf_threshold = 0.95  # threshold allowing us to mine or not
+    cdf_threshold = 0.1  # threshold allowing us to mine or not
     min_n_units = 3  # minimum number of units required to mine. So long as cdf_threshold portion of the probability
                     # is 
     obj_weights = [0.33, 0.33, 0.33]  # how we want to weight each component of the reward
@@ -119,6 +120,28 @@ function get_action_type(a::Action)
     return action_type
 end
 
+# Takes in a string version of the action and returns it as the enum type Action
+#! I know this is hardcoded and bad right now
+function str_to_action(s::String)
+    if s == "MINE1"
+        return MINE1
+    elseif s == "MINE2"
+        return MINE2
+    elseif s == "MINE3"
+        return MINE3
+    elseif s == "MINE4"
+        return MINE4
+    elseif s == "EXPLORE1"
+        return EXPLORE1
+    elseif s == "EXPLORE2"
+        return EXPLORE2
+    elseif s == "EXPLORE3"
+        return EXPLORE3
+    else
+        return EXPLORE4
+    end
+end
+
 # Unsure if the right way to do this is to have a product distribution over the 4 deposits? 
 # Pass in an RNG?
 function POMDPs.initialstate(P::LiPOMDP)
@@ -147,10 +170,6 @@ function POMDPs.states(P::LiPOMDP)
     
 end
 
-# function POMDPs.actions(P::LiPOMDP)
-#     return [MINE1, MINE2, MINE3, MINE4, EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4]
-# end
-
 function can_explore_here(a::Action, b::LiBelief)
     action_type = get_action_type(a)
     site_number = get_site_number(a)
@@ -161,22 +180,26 @@ function can_explore_here(a::Action, b::LiBelief)
     return !b.have_mined[site_number]
 end
 
+# Action function: Returns all possible actions
+function POMDPs.actions(P::LiPOMDP)
+    return [MINE1, MINE2, MINE3, MINE4, EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4]
+end
 
 # Action function: now dependent on belief state
 function POMDPs.actions(P::LiPOMDP, b::LiBelief)
     potential_actions = [MINE1, MINE2, MINE3, MINE4, EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4]
     
     # Checks to ensure that we aren't trying to explore at a site we have already mined at
-    for i = 1:4
-        potential_actions = filter(a -> can_explore_here(a, b), potential_actions)
-    end
+    potential_actions = filter(a -> can_explore_here(a, b), potential_actions)
     
-    # Ensures that there is <= 10% of the belief distribution below 
+    # Ensures that there is <= 10% (or P.cdf_threshold) of the belief distribution below the P.min_n_units
     for i = 1:4
         dist = b.deposit_dists[i]
         portion_below_threshold = cdf(dist, P.min_n_units)
         if portion_below_threshold > P.cdf_threshold  # BAD!
-            bad_action = "MINE" * string(i)
+
+            bad_action_str = "MINE" * string(i)
+            bad_action = str_to_action(bad_action_str)
             # Ensure that this bad_action is not in potential_actions
             potential_actions = filter(a -> a != bad_action, potential_actions)
         end   
@@ -185,22 +208,9 @@ function POMDPs.actions(P::LiPOMDP, b::LiBelief)
     
 end
 
-function tester(P::LiPOMDP, b::LiBelief)
-   for i = 1:4
-        dist = b.deposit_dists[i]
-        portion_below_threshold = cdf(dist, P.min_n_units)
-        if portion_below_threshold > P.cdf_threshold  # BAD!
-            bad_action = "MINE" * string(i)
-            # Ensure that this bad_action is not in potential_actions
-            potential_actions = filter(a -> a != bad_action, potential_actions)
-        end   
-    end  
-end
-
-
-
 P = LiPOMDP()
-b0 = LiBelief([Normal(1, .1), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], [1, 2, 3, 4], 0.0, 0.0, [false, false, false, false])
+b0 = LiBelief([Normal(1, .1), Normal(2, 2), Normal(4, 0.2), Normal(9, 4)], [1, 2, 3, 4], 0.0, 0.0, [true, true, true, true])
+
 actions(P, b0)
 
 ## OLD REWARD FN
@@ -383,6 +393,7 @@ b0 = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], [1, 
 
 ap, info = action_info(planner, b0, tree_in_info=true)
 tree = D3Tree(info[:tree], init_expand=1)
+inchrome(tree)
 
 # inputs: pomddp, an initial belief, and a sequence of actions. 
 # Runs the updater on said sequence, keeping track of the belief at each time step in a history vector
@@ -431,8 +442,6 @@ init_state = P.init_state
 dep_1_actions = [EXPLORE1, MINE1]
 action_sequence = [EXPLORE1, EXPLORE1, MINE1, EXPLORE1, MINE1, EXPLORE1]#[rand(dep_1_actions) for x in 1:20]
 
-
-
 # Change MersenneTwister(1) to rng
 belief_history, state_history = run_sims(P, init_belief, init_state, action_sequence, MersenneTwister(7))
 times = [b.t for b in belief_history]
@@ -458,6 +467,7 @@ d1_normals = [b.deposit_dists[1] for b in belief_history]
     
     plot(5:0.01:10, (x) -> pdf(normal, x), title = "Iter. $i, a: $a", ylim = (0, 20), xlim = (5, 10), xlabel = "V₁ belief", label= "V₁ belief", legend=:topright, color=:purple)
 end fps = 2
+
 
 
 ## random crap
