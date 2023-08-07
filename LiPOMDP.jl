@@ -24,7 +24,6 @@ By: Yasmine Alonso with assistance from Mykel Kochenderfer, Mansur Arief, and An
 
 @with_kw mutable struct State
     deposits::Vector{Float64} # [v₁, v₂, v₃, v₄]
-    CO2_emissions::Vector{Float64}  #[C₁, C₂, C₃, C₄] amount of CO2 each site emits
     t::Float64 = 0  # current time
     Vₜ::Float64 = 0  # current amt of Li mined up until now
     have_mined::Vector{Bool} = [false, false, false, false]  # Boolean value to represent whether or not we have taken a mine action
@@ -47,7 +46,7 @@ end
 
 # Make a copy of the state
 function Base.deepcopy(s::State)
-   return State(deepcopy(s.deposits), deepcopy(s.CO2_emissions), s.t, s.Vₜ, s.have_mined)  # don't have to copy t and Vₜ cuz theyre immutable i think
+   return State(deepcopy(s.deposits), s.t, s.Vₜ, deepcopy(s.have_mined))  # don't have to copy t and Vₜ cuz theyre immutable i think
 end
 
 # All potential actions
@@ -65,17 +64,15 @@ rng = MersenneTwister(1)
     bin_edges = [0.25, 0.5, 0.75]  # Used to discretize observations
     cdf_threshold = 0.1  # threshold allowing us to mine or not
     min_n_units = 3  # minimum number of units required to mine. So long as cdf_threshold portion of the probability
-                    # is 
-    obj_weights = [0.33, 0.33, 0.33]  # how we want to weight each component of the reward
-    
-    null_state::State = State([-1, -1, -1, -1], [-1, -1, -1, -1], -1, -1, [false, false, false, false])
-    init_state::State = State([8.9, 7, 1.8, 5], [1, 2, 3, 4], 0, 0, [false, false, false, false])  # For convenience for me rn when I want to do a quick test and pass in some state
+    obj_weights = [0.33, 0.33, 0.33]  # how we want to weight each component of the reward 
+    CO2_emissions::Vector{Float64} = [5, 7, 2, 5]  #[C₁, C₂, C₃, C₄] amount of CO2 each site emits
+    null_state::State = State([-1, -1, -1, -1], -1, -1, [false, false, false, false])
+    init_state::State = State([8.9, 7, 1.8, 5], 0, 0, [false, false, false, false])  # For convenience for me rn when I want to do a quick test and pass in some state
 end
 
 # Belief struct
 struct LiBelief
     deposit_dists::Vector{Normal}
-    CO2_emissions::Vector{Float64}
     t::Float64
     V_tot::Float64
     have_mined::Vector{Bool} 
@@ -85,11 +82,10 @@ end
 # Input a belief and randomly produce a state from it 
 function Base.rand(rng::AbstractRNG, b::LiBelief)
     deposit_samples = rand.(rng, b.deposit_dists)
-    CO2_emissions = b.CO2_emissions
     t = b.t
     V_tot = b.V_tot
     have_mined = b.have_mined
-    return State(deposit_samples, CO2_emissions, t, V_tot, have_mined)
+    return State(deposit_samples, t, V_tot, have_mined)
 end
 
 # In: an action (enum)
@@ -209,7 +205,7 @@ function POMDPs.actions(P::LiPOMDP, b::LiBelief)
 end
 
 P = LiPOMDP()
-b0 = LiBelief([Normal(1, .1), Normal(2, 2), Normal(4, 0.2), Normal(9, 4)], [1, 2, 3, 4], 0.0, 0.0, [true, true, true, true])
+b0 = LiBelief([Normal(8, .1), Normal(8, 2), Normal(4, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
 
 actions(P, b0)
 
@@ -237,7 +233,7 @@ function POMDPs.reward(P::LiPOMDP, s::State, a::Action)
     action_number = get_site_number(a)
     
     # r3 is the co2 emission part
-    r3 = (action_type == "MINE") ? s.CO2_emissions[action_number] * -1 : 0
+    r3 = (action_type == "MINE") ? P.CO2_emissions[action_number] * -1 : 0
     
     reward = dot([r1, r2, r3], P.obj_weights)
     
@@ -292,7 +288,7 @@ function POMDPs.observation(P::LiPOMDP, a::Action, sp::State)
     else  # action_type must be "EXPLORE"
 #         temp[site_number] = Normal(sp.deposits[site_number], P.σ_obs)
 #         return product_distribution(temp)
-        cts_dist, _ = disc_and_ctns_obs(P, a, sp)  # Here we don't need the discretized obs, only cts. We will use discretized in gen
+        cts_dist, disc = disc_and_ctns_obs(P, a, sp)  # Here we don't need the discretized obs, only cts. We will use discretized in gen
         return cts_dist
     end
 end
@@ -320,11 +316,12 @@ function disc_and_ctns_obs(P::LiPOMDP, a::Action, sp::State)
     discretized_obs = [-1.0, -1.0, -1.0, -1.0]  
     discretized_obs[site_number] = snapped_obs  # Replace proper index with relevant observation
    
+    #! discretized_obs should beproduct distribution 
     return cts_dist, discretized_obs
 end
 
 # Define == operator to use in the termination thing, just compares two states
-Base.:(==)(s1::State, s2::State) = (s1.deposits == s2.deposits) && (s1.t == s2.t) && (s1.Vₜ == s2.Vₜ) && (s1.CO2_emissions == s2.CO2_emissions) && (s1.have_mined == s2.have_mined)
+Base.:(==)(s1::State, s2::State) = (s1.deposits == s2.deposits) && (s1.t == s2.t) && (s1.Vₜ == s2.Vₜ) && (s1.have_mined == s2.have_mined)
 
 POMDPs.discount(P::LiPOMDP) = P.γ
 
@@ -355,7 +352,7 @@ function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
         bi_prime = Normal(μ_prime, σ_prime)
         
         # Default, not including updated belief
-        belief = LiBelief([b.deposit_dists[1], b.deposit_dists[2], b.deposit_dists[3], b.deposit_dists[4]], b.CO2_emissions, b.t + 1, b.V_tot, b.have_mined)
+        belief = LiBelief([b.deposit_dists[1], b.deposit_dists[2], b.deposit_dists[3], b.deposit_dists[4]], b.t + 1, b.V_tot, b.have_mined)
         
         # Now, at the proper site number, update to contain the updated belief
         belief.deposit_dists[site_number] = bi_prime
@@ -378,7 +375,7 @@ function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
         end
         
         # Default, not including updated belief
-        belief = LiBelief([b.deposit_dists[1], b.deposit_dists[2], b.deposit_dists[3], b.deposit_dists[4]], b.CO2_emissions, b.t + 1, b.V_tot + n_units_mined, b.have_mined)
+        belief = LiBelief([b.deposit_dists[1], b.deposit_dists[2], b.deposit_dists[3], b.deposit_dists[4]], b.t + 1, b.V_tot + n_units_mined, b.have_mined)
         # Now, at the proper site number, update to contain the updated belief
         belief.deposit_dists[site_number] = Normal(μi_prime, σi)
         return belief
@@ -389,8 +386,8 @@ end
 solver = POMCPOWSolver()
 pomdp = LiPOMDP()
 planner = solve(solver, pomdp)
-b0 = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], [1, 2, 3, 4], 0.0, 0.0, [false, false, false, false])
-
+b0 = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(3, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
+actions(pomdp, b0)
 ap, info = action_info(planner, b0, tree_in_info=true)
 tree = D3Tree(info[:tree], init_expand=1)
 inchrome(tree)
@@ -424,7 +421,7 @@ function run_sims(P::LiPOMDP, b0::LiBelief, s0::State, action_sequence::Vector{A
 end
 
 P = LiPOMDP()
-init_belief = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], [1, 2, 3, 4], 0, 0, [false, false, false, false])
+init_belief = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], 0, 0, [false, false, false, false])
 init_state = P.init_state
 
 a = EXPLORE3
@@ -434,7 +431,7 @@ new_belief = update(P, init_belief, a, o)
 
 using Plots
 P = LiPOMDP()
-init_belief = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], [1, 2, 3, 4], 0.0, 0.0, [false, false, false, false])
+init_belief = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
 init_state = P.init_state
 
 
