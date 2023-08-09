@@ -1,7 +1,12 @@
 #=
 Modeling the US Path to Lithium Self Sufficiency Using POMDPs
 Summer 2023
-By: Yasmine Alonso with assistance from Mykel Kochenderfer, Mansur Arief, and Anthony Corso
+Yasmine Alonso, Mansur Arief, Anthony Corso, Jef Caers, and Mykel Kochenderfer
+
+File: LiPOMDP.jl
+----------------
+This file contains the continuous version of the observation function. We use the DiscreteLiPOMDP.jl file
+for planning, and this file for running simulations.
 =#
 
 # All of the imports
@@ -27,6 +32,16 @@ By: Yasmine Alonso with assistance from Mykel Kochenderfer, Mansur Arief, and An
     t::Float64 = 0  # current time
     Vₜ::Float64 = 0  # current amt of Li mined up until now
     have_mined::Vector{Bool} = [false, false, false, false]  # Boolean value to represent whether or not we have taken a mine action
+end
+
+#! Get rid of magic numbers, this was a chatGPT suggestion to avoid an error I was getting
+#! This is not working. figure it out LOL
+function Random.rand(rng::AbstractRNG, ::Random.SamplerType{State})
+    deposits = rand(rng, 0:0.01:10, Float64, 4)
+    t = rand(rng) * 50
+    Vₜ = rand(rng) * 50
+    have_mined = rand(rng, Bool, 4)
+    return State(deposits, t, Vₜ, have_mined)
 end
 
 # To make the struct iterable (potentially for value iteration?) Was experiencing errors
@@ -62,7 +77,7 @@ rng = MersenneTwister(1)
     Vₜ_goal = 5
     γ = 0.9
     n_deposits = 4 
-    bin_edges = [0.25, 0.5, 0.75]  # Used to discretize observations
+    #bin_edges = [0.25, 0.5, 0.75]  # Used to discretize observations
     cdf_threshold = 0.1  # threshold allowing us to mine or not
     min_n_units = 3  # minimum number of units required to mine. So long as cdf_threshold portion of the probability
     obj_weights = [0.33, 0.33, 0.33]  # how we want to weight each component of the reward 
@@ -96,6 +111,7 @@ function get_site_number(a::Action)
     action_str = string(a)
     len = length(action_str)
     deposit_number = Int(action_str[len]) - 48  # -48 because Int() gives me the ascii code
+    return deposit_number
 end
 
 # I'm sure there's some builtin for this but I couldn't find it lol
@@ -157,7 +173,7 @@ function POMDPs.states(P::LiPOMDP)
     V_tot_min = V_deposit_min * P.n_deposits  # 0
     V_tot_max = V_deposit_max * P.n_deposits  # 40
     
-    deposit_vec_bounds = [(V_deposit_min, V_deposit_max) for x in 1:n_deposits]  # Make a length-4 vector, one for each deposit
+    deposit_vec_bounds = [(V_deposit_min, V_deposit_max) for x in 1:P.n_deposits]  # Make a length-4 vector, one for each deposit
     V_tot_bounds = Interval(V_tot_min, V_tot_max)
     time_bounds = 0:10  # This can be discrete since we're only going a year at a time
     
@@ -178,6 +194,7 @@ function can_explore_here(a::Action, b::LiBelief)
 end
 
 # Action function: Returns all possible actions
+#! not sure why I need to have both action functions -- mykel seemed to think that the belief dependent one should suffice for POMCPOW
 function POMDPs.actions(P::LiPOMDP)
     return [MINE1, MINE2, MINE3, MINE4, EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4]
 end
@@ -205,35 +222,25 @@ function POMDPs.actions(P::LiPOMDP, b::LiBelief)
     
 end
 
-P = LiPOMDP()
-b0 = LiBelief([Normal(8, .1), Normal(8, 2), Normal(4, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
 
-actions(P, b0)
+# Reward function: returns the reward for being in state s and taking action a
+# Reward is comprised of three parts:
+#       1. Whether or not we have reached our time delay + volume goal (1 if yes, 0 if no)
+#       2. The amount of volume we have mined
+#       3. The amount of CO2 emissions we have produced if taking a mine action (negative)
+# The three parts of the reward are then weighted by the obj_weights vector and returned.
 
-## OLD REWARD FN
-    # function POMDPs.reward(P::LiPOMDP, s::State, a::Action)
-    #     if s.t >= P.t_goal && s.Vₜ >= P.Vₜ_goal
-    #         return 1
-    #     else
-    #         return 0
-    #     end
-    # end
-
-
-# Updated reward fn
 function POMDPs.reward(P::LiPOMDP, s::State, a::Action)
-    r = 0
-    
-    # Not sure how we want to account for time
+    # Time and volume delay goal
     r1 = (s.t >= P.t_goal && s.Vₜ >= P.Vₜ_goal) ? 1 : 0
 
-    # Do we have to discount this manually? or will that be done with the solver
+    # Total amount mined thus far
     r2 = s.Vₜ
     
     action_type = get_action_type(a)
     action_number = get_site_number(a)
     
-    # r3 is the co2 emission part
+    # Subtract carbon emissions (if relevant)
     r3 = (action_type == "MINE") ? P.CO2_emissions[action_number] * -1 : 0
     
     reward = dot([r1, r2, r3], P.obj_weights)
@@ -267,8 +274,8 @@ function POMDPs.gen(P::LiPOMDP, s::State, a::Action, rng::AbstractRNG)
     end
     # Now sample an observation and get the reward as well
     
-    # Here now in gen we're using the discrete observation.
-    cts_dist, o = disc_and_ctns_obs(P, a, next_state) #rand(rng, observation(P, a, next_state))  # Vector of floats
+    # o is continuous
+    o = rand(rng, observation(P, a, next_state))  # Vector of floats
     r = reward(P, s, a)
     return (sp=next_state, o=o, r=r)  
 end
@@ -278,47 +285,16 @@ function POMDPs.observation(P::LiPOMDP, a::Action, sp::State)
     # When we take an action to EXPLORE one of the four sites, we only really gain an observation on said
     # state. So, the other remaining three states have this kinda sentinel distribution thing of -1 to represent
     # that it's not really important/relevant
-
     site_number = get_site_number(a)  #1, 2, 3, or 4, basically last character of    
     action_type = get_action_type(a)  # "EXPLORE" or "MINE"
     temp::Vector{UnivariateDistribution} = [DiscreteNonParametric([-1], [1]), DiscreteNonParametric([-1], [1]), DiscreteNonParametric([-1], [1]), DiscreteNonParametric([-1], [1])]
     
     if action_type == "MINE"
        return product_distribution(temp) 
-        
     else  # action_type must be "EXPLORE"
-#         temp[site_number] = Normal(sp.deposits[site_number], P.σ_obs)
-#         return product_distribution(temp)
-        cts_dist, disc = disc_and_ctns_obs(P, a, sp)  # Here we don't need the discretized obs, only cts. We will use discretized in gen
-        return cts_dist
+        temp[site_number] = Normal(sp.deposits[site_number], P.σ_obs)
+        return product_distribution(temp)
     end
-end
-
-# This function allows us to get both the distribution (continuous, like before) and then also a discretized
-# Version of the observation (returns 1 of 5 possible observations). It returns the distribution (continuous)
-# and also a vector of floats with the proper site index holding the bucketed observation
-function disc_and_ctns_obs(P::LiPOMDP, a::Action, sp::State)
-    site_number = get_site_number(a)  #1, 2, 3, or 4, basically last character of    
-    temp::Vector{UnivariateDistribution} = [DiscreteNonParametric([-1], [1]), DiscreteNonParametric([-1], [1]), DiscreteNonParametric([-1], [1]), DiscreteNonParametric([-1], [1])]
-    site_dist = Normal(sp.deposits[site_number], P.σ_obs)
-    
-    
-    # Bin converting, snapping rand obs -> 1 of 5 things
-    sample_point = rand(site_dist)  # Step 1: get us a random sample on that distribution 
-    quantile_vols = quantile(site_dist, P.bin_edges)  # Step 2: get the Li Volume amounts that correspond to each quantile
-    index = argmin(abs.(sample_point .- quantile_vols))  # Step 3: get the index of the quantiled volume that is closest to our sample_point
-    snapped_obs = quantile_vols[index]
-    
-    # Continuous observation
-    temp[site_number] = site_dist
-    cts_dist = product_distribution(temp)  # Continuous stuff, the usual
-    
-    # Discretized observation
-    discretized_obs = [-1.0, -1.0, -1.0, -1.0]  
-    discretized_obs[site_number] = snapped_obs  # Replace proper index with relevant observation
-   
-    #! discretized_obs should beproduct distribution 
-    return cts_dist, discretized_obs
 end
 
 # Define == operator to use in the termination thing, just compares two states
@@ -387,7 +363,7 @@ end
 solver = POMCPOWSolver()
 pomdp = LiPOMDP()
 planner = solve(solver, pomdp)
-b0 = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(3, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
+b0 = LiBelief([Normal(9, 0.2), Normal(1, 2), Normal(3, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
 actions(pomdp, b0)
 ap, info = action_info(planner, b0, tree_in_info=true)
 tree = D3Tree(info[:tree], init_expand=1)
