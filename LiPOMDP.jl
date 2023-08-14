@@ -24,6 +24,7 @@ for planning, and this file for running simulations.
     using Statistics
     using QMDP
     using D3Trees
+    using ConjugatePriors: posterior
 
 
 
@@ -87,8 +88,8 @@ rng = MersenneTwister(1)
 end
 
 # Belief struct
-struct LiBelief
-    deposit_dists::Vector{Normal}
+struct LiBelief{T<:UnivariateDistribution}
+    deposit_dists::Vector{T}
     t::Float64
     V_tot::Float64
     have_mined::Vector{Bool} 
@@ -310,12 +311,12 @@ POMDPs.discount(P::LiPOMDP) = P.γ
 POMDPs.isterminal(P::LiPOMDP, s::State) = s == P.null_state
 
 # kalman_step is used in the belief updater update function
-function kalman_step(P::LiPOMDP, μ::Float64, σ::Float64, z::Float64)
-    k = σ / (σ + P.σ_obs)  # Kalman gain
-    μ_prime = μ + k * (z - μ)  # Estimate new mean
-    σ_prime = (1 - k) * σ   # Estimate new uncertainty
-    return μ_prime, σ_prime
-end
+#function kalman_step(P::LiPOMDP, μ::Float64, σ::Float64, z::Float64)
+#    k = σ / (σ + P.σ_obs)  # Kalman gain
+#    μ_prime = μ + k * (z - μ)  # Estimate new mean
+#    σ_prime = (1 - k) * σ   # Estimate new uncertainty
+#    return μ_prime, σ_prime
+#end
 
 # takes in a belief, action, and observation and uses it to update the belief
 function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
@@ -324,11 +325,9 @@ function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
     
     if action_type == "EXPLORE"
         bi = b.deposit_dists[site_number]  
-        μi = mean(bi)
-        σi = std(bi)
-        zi = o[site_number]
-        μ_prime, σ_prime = kalman_step(P, μi, σi, zi)
-        bi_prime = Normal(μ_prime, σ_prime)
+        zi = Array([o[site_number]])
+        prior = (bi, std(bi))
+        bi_prime = posterior(prior, Normal, zi)
         
         # Default, not including updated belief
         belief = LiBelief(copy(b.deposit_dists), b.t + 1, b.V_tot, copy(b.have_mined))
@@ -366,10 +365,13 @@ include("utils.jl")
 
 # POMCPOW Solver
 pomdp = LiPOMDP()
+s0 = pomdp.init_state
+
 solver = POMCPOWSolver(next_action=next_action) #use our own random next_action function
 planner = solve(solver, pomdp)
 b0 = LiBelief([Normal(9, 0.2), Normal(1, 2), Normal(3, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
-actions(pomdp, b0)
+
+# actions(pomdp, b0)
 ap, info = action_info(planner, b0, tree_in_info=true)
 tree = D3Tree(info[:tree], init_expand=1)
 inchrome(tree)
@@ -402,14 +404,14 @@ function run_sims(P::LiPOMDP, b0::LiBelief, s0::State, action_sequence::Vector{A
     return belief_history, state_history
 end
 
-P = LiPOMDP()
-init_belief = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], 0, 0, [false, false, false, false])
-init_state = P.init_state
+# P = LiPOMDP()
+# init_belief = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], 0., 0., [false, false, false, false])
+# init_state = P.init_state
 
-a = EXPLORE3
-dist = observation(P, a, init_state)  # Product distribution
-o = rand(dist) # Vector of floats, index in to proper index
-new_belief = update(P, init_belief, a, o)
+# a = EXPLORE3
+# dist = observation(P, a, init_state)  # Product distribution
+# o = rand(dist) # Vector of floats, index in to proper index
+# new_belief = update(P, init_belief, a, o)
 
 using Plots
 P = LiPOMDP()
@@ -418,55 +420,35 @@ init_state = P.init_state
 
 
 # Deposit 1 stuff
-dep_1_actions = [EXPLORE1, MINE1]
-action_sequence = [EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4, MINE1, MINE2, EXPLORE3, EXPLORE4, MINE3, EXPLORE4, MINE4, MINE4, MINE4]#[rand(dep_1_actions) for x in 1:20]
+# dep_1_actions = [EXPLORE1, MINE1]
+#action_sequence = [EXPLORE1, EXPLORE1, EXPLORE1, EXPLORE1, MINE1, MINE1]#[rand(dep_1_actions) for x in 1:20]
+action_sequence = [EXPLORE1, EXPLORE2, EXPLORE1, EXPLORE2, MINE1, MINE2]#[rand(dep_1_actions) for x in 1:20]
 
 # Change MersenneTwister(1) to rng
 belief_history, state_history = run_sims(P, init_belief, init_state, action_sequence, MersenneTwister(7))
 times = [b.t for b in belief_history]
-μs = [mean(b.deposit_dists[1]) for b in belief_history]
-σs = [std(b.deposit_dists[1]) for b in belief_history]
-true_v1s = [s.deposits[1] for s in state_history] # actual amount of Li
+# μs = [mean(b.deposit_dists[1]) for b in belief_history]
+# σs = [std(b.deposit_dists[1]) for b in belief_history]
+# true_v1s = [s.deposits[1] for s in state_history] # actual amount of Li
 
-plot(times, μs, grid=false, ribbon=σs, fillalpha=0.5, title="Deposit 1 Belief vs. time", xlabel="Time (t)", ylabel="Amount Li in deposit 1", label="μ1", linecolor=:orange, fillcolor=:orange)
-plot!(times, true_v1s, label="Actual V₁", color=:blue)
+# plot(times, μs, grid=false, ribbon=σs, fillalpha=0.5, title="Deposit 1 Belief vs. time", xlabel="Time (t)", ylabel="Amount Li in deposit 1", label="μ1", linecolor=:orange, fillcolor=:orange)
+# plot!(times, true_v1s, label="Actual V₁", color=:blue)
 
 belief_history, state_history = run_sims(P, init_belief, init_state, action_sequence, rng)
 times = [b.t for b in belief_history]  # Goes up at top like an iteration counter
+d1_normals = [b.deposit_dists[2] for b in belief_history]
 
-
-# d1_normals = [b.deposit_dists[1] for b in belief_history]
-
-
-# @gif for i in 1:length(times)
-#     normal = d1_normals[i]
-#     if i < 7
-#         a = action_sequence[i]
-#     else
-#         a = "DONE"
-#     end    
-    
-#     plot(5:0.01:10, (x) -> pdf(normal, x), title = "Iter. $i, a: $a", ylim = (0, 20), xlim = (5, 10), xlabel = "V₁ belief", label= "V₁ belief", legend=:topright, color=:purple)
-# end fps = 2
-
-
-# Assuming the belief_history structure has 4 deposits, we'll collect all the normals for each deposit
-d_normals = [[b.deposit_dists[j] for b in belief_history] for j in 1:4]
-
-colors = [:purple, :blue, :green, :orange]
-titles = ["V₁ belief", "V₂ belief", "V₃ belief", "V₄ belief"]
 
 @gif for i in 1:length(times)
-    plots = []
-    for j in 1:4
-        normal = d_normals[j][i]
+    normal = d1_normals[i]
+    if i < 7
         a = action_sequence[i]
-        p = plot(0:0.01:10, (x) -> pdf(normal, x), title = "Iter. $i, a: $a", ylim = (0, 20), xlim = (0, 10), xlabel = titles[j], label= titles[j], legend=:topright, color=colors[j])
-        push!(plots, p)
-    end
-    plot(plots[1], plots[2], plots[3], plots[4], layout = (2,2))
+    else
+        a = "DONE"
+    end    
+    
+    plot(3:0.01:10, (x) -> pdf(normal, x), title = "Iter. $i, a: $a", ylim = (0, 20), xlim = (3, 10), xlabel = "V belief", label= "V belief", legend=:topright, color=:purple)
 end fps = 1
-
 
 
 ## random crap

@@ -2,7 +2,7 @@
 
 julia_version = "1.9.0"
 manifest_format = "2.0"
-project_hash = "e2660369d13a3550bbf35dda86590d2a4c72d97a"
+project_hash = "93930af6684817821c4e3680a2bf0b8fd5858e77"
 
 [[deps.AbstractTrees]]
 git-tree-sha1 = "faa260e4cb5aba097a73fab382dd4b5819d8ec8c"
@@ -148,6 +148,12 @@ deps = ["Serialization", "Sockets"]
 git-tree-sha1 = "5372dbbf8f0bdb8c700db5367132925c0771ef7e"
 uuid = "f0e56b4a-5159-44fe-b623-3e5288b988bb"
 version = "2.2.1"
+
+[[deps.ConjugatePriors]]
+deps = ["Distributions", "LinearAlgebra", "PDMats", "SpecialFunctions", "Statistics", "StatsFuns"]
+git-tree-sha1 = "5d37e8627c65bed9349bf480678b7c5bd295049c"
+uuid = "1624bea9-42b1-5fc1-afd3-e96f729c8d6c"
+version = "0.5.0"
 
 [[deps.Contour]]
 deps = ["StaticArrays"]
