@@ -183,14 +183,19 @@ function POMDPs.states(P::LiPOMDP)
     
 end
 
-function can_explore_here(a::Action, b::LiBelief)
+function can_explore_here(a::Action, b::Union{LiBelief, State, POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}}})
     action_type = get_action_type(a)
     site_number = get_site_number(a)
+
     if action_type == "MINE"
         return true
     end
-    
-    return !b.have_mined[site_number]
+
+    if isa(b, POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}})
+        b = sample_state_belief(b)
+    end
+
+    return !b.have_mined[site_number]        
 end
 
 # Action function: Returns all possible actions
@@ -201,7 +206,7 @@ end
 
 # Action function: now dependent on belief state
 function POMDPs.actions(P::LiPOMDP, b::LiBelief)
-    potential_actions = [MINE1, MINE2, MINE3, MINE4, EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4]
+    potential_actions = actions(P)
     
     # Checks to ensure that we aren't trying to explore at a site we have already mined at
     potential_actions = filter(a -> can_explore_here(a, b), potential_actions)
@@ -314,14 +319,11 @@ end
 
 # takes in a belief, action, and observation and uses it to update the belief
 function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
-    # EXPLORE actions: Adjust mean of the distribution corresponding to the proper deposit, using the Kalman
-    # predict/update step (see kalman_step function above). Time increases by 1 in the belief.
-    # Return new belief, with everything else untouched (EXPLORE only allows us to gain info about one site) 
     action_type = get_action_type(a)
     site_number = get_site_number(a)
     
     if action_type == "EXPLORE"
-        bi = b.deposit_dists[site_number]  # This is a normal distribution
+        bi = b.deposit_dists[site_number]  
         μi = mean(bi)
         σi = std(bi)
         zi = o[site_number]
@@ -329,17 +331,15 @@ function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
         bi_prime = Normal(μ_prime, σ_prime)
         
         # Default, not including updated belief
-        belief = LiBelief([b.deposit_dists[1], b.deposit_dists[2], b.deposit_dists[3], b.deposit_dists[4]], b.t + 1, b.V_tot, b.have_mined)
+        belief = LiBelief(copy(b.deposit_dists), b.t + 1, b.V_tot, copy(b.have_mined))
         
         # Now, at the proper site number, update to contain the updated belief
         belief.deposit_dists[site_number] = bi_prime
         
         return belief
 
-    # MINE actions: Shifts our mean of the distribution corresponding to the proper deposit down by 1 (since we
-    # have just mined one unit deterministically). Does not affect certainty at all. 
     else # a must be a MINE action
-        bi = b.deposit_dists[1]
+        bi = b.deposit_dists[site_number]
         μi = mean(bi)
         σi = std(bi)
         
@@ -352,16 +352,21 @@ function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
         end
         
         # Default, not including updated belief
-        belief = LiBelief([b.deposit_dists[1], b.deposit_dists[2], b.deposit_dists[3], b.deposit_dists[4]], b.t + 1, b.V_tot + n_units_mined, b.have_mined)
+        belief = LiBelief(copy(b.deposit_dists), b.t + 1, b.V_tot + n_units_mined, copy(b.have_mined))
+        
         # Now, at the proper site number, update to contain the updated belief
         belief.deposit_dists[site_number] = Normal(μi_prime, σi)
+        belief.have_mined[site_number] = true  # Update the mining history
         return belief
     end 
 end
 
+#added new functions
+include("utils.jl")
+
 # POMCPOW Solver
-solver = POMCPOWSolver()
 pomdp = LiPOMDP()
+solver = POMCPOWSolver(next_action=next_action) #use our own random next_action function
 planner = solve(solver, pomdp)
 b0 = LiBelief([Normal(9, 0.2), Normal(1, 2), Normal(3, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
 actions(pomdp, b0)
@@ -414,7 +419,7 @@ init_state = P.init_state
 
 # Deposit 1 stuff
 dep_1_actions = [EXPLORE1, MINE1]
-action_sequence = [EXPLORE1, EXPLORE1, MINE1, EXPLORE1, MINE1, EXPLORE1]#[rand(dep_1_actions) for x in 1:20]
+action_sequence = [EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4, MINE1, MINE2, EXPLORE3, EXPLORE4, MINE3, EXPLORE4, MINE4, MINE4, MINE4]#[rand(dep_1_actions) for x in 1:20]
 
 # Change MersenneTwister(1) to rng
 belief_history, state_history = run_sims(P, init_belief, init_state, action_sequence, MersenneTwister(7))
@@ -428,19 +433,39 @@ plot!(times, true_v1s, label="Actual V₁", color=:blue)
 
 belief_history, state_history = run_sims(P, init_belief, init_state, action_sequence, rng)
 times = [b.t for b in belief_history]  # Goes up at top like an iteration counter
-d1_normals = [b.deposit_dists[1] for b in belief_history]
 
+
+# d1_normals = [b.deposit_dists[1] for b in belief_history]
+
+
+# @gif for i in 1:length(times)
+#     normal = d1_normals[i]
+#     if i < 7
+#         a = action_sequence[i]
+#     else
+#         a = "DONE"
+#     end    
+    
+#     plot(5:0.01:10, (x) -> pdf(normal, x), title = "Iter. $i, a: $a", ylim = (0, 20), xlim = (5, 10), xlabel = "V₁ belief", label= "V₁ belief", legend=:topright, color=:purple)
+# end fps = 2
+
+
+# Assuming the belief_history structure has 4 deposits, we'll collect all the normals for each deposit
+d_normals = [[b.deposit_dists[j] for b in belief_history] for j in 1:4]
+
+colors = [:purple, :blue, :green, :orange]
+titles = ["V₁ belief", "V₂ belief", "V₃ belief", "V₄ belief"]
 
 @gif for i in 1:length(times)
-    normal = d1_normals[i]
-    if i < 7
+    plots = []
+    for j in 1:4
+        normal = d_normals[j][i]
         a = action_sequence[i]
-    else
-        a = "DONE"
-    end    
-    
-    plot(5:0.01:10, (x) -> pdf(normal, x), title = "Iter. $i, a: $a", ylim = (0, 20), xlim = (5, 10), xlabel = "V₁ belief", label= "V₁ belief", legend=:topright, color=:purple)
-end fps = 2
+        p = plot(0:0.01:10, (x) -> pdf(normal, x), title = "Iter. $i, a: $a", ylim = (0, 20), xlim = (0, 10), xlabel = titles[j], label= titles[j], legend=:topright, color=colors[j])
+        push!(plots, p)
+    end
+    plot(plots[1], plots[2], plots[3], plots[4], layout = (2,2))
+end fps = 1
 
 
 
