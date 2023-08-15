@@ -24,8 +24,7 @@ for planning, and this file for running simulations.
     using Statistics
     using QMDP
     using D3Trees
-    using ConjugatePriors: posterior
-
+    #using ConjugatePriors: posterior
 
 
 @with_kw mutable struct State
@@ -33,16 +32,6 @@ for planning, and this file for running simulations.
     t::Float64 = 0  # current time
     Vₜ::Float64 = 0  # current amt of Li mined up until now
     have_mined::Vector{Bool} = [false, false, false, false]  # Boolean value to represent whether or not we have taken a mine action
-end
-
-#! Get rid of magic numbers, this was a chatGPT suggestion to avoid an error I was getting
-#! This is not working. figure it out LOL
-function Random.rand(rng::AbstractRNG, ::Random.SamplerType{State})
-    deposits = rand(rng, 0:0.01:10, Float64, 4)
-    t = rand(rng) * 50
-    Vₜ = rand(rng) * 50
-    have_mined = rand(rng, Bool, 4)
-    return State(deposits, t, Vₜ, have_mined)
 end
 
 # To make the struct iterable (potentially for value iteration?) Was experiencing errors
@@ -69,16 +58,14 @@ end
 @enum Action MINE1 MINE2 MINE3 MINE4 EXPLORE1 EXPLORE2 EXPLORE3 EXPLORE4
 rng = MersenneTwister(1)
 
-#this is a test for switching back to previous commits
-
-# Params for the POMDP
 @with_kw struct LiPOMDP <: POMDP{State, Action, Any} 
     t_goal = 10
     σ_obs = 0.1
     Vₜ_goal = 5
     γ = 0.9
     n_deposits = 4 
-    #bin_edges = [0.25, 0.5, 0.75]  # Used to discretize observations
+    bin_edges = [0.25, 0.5, 0.75]  # Used to discretize observations
+    obs_type = "continuous"
     cdf_threshold = 0.1  # threshold allowing us to mine or not
     min_n_units = 3  # minimum number of units required to mine. So long as cdf_threshold portion of the probability
     obj_weights = [0.33, 0.33, 0.33]  # how we want to weight each component of the reward 
@@ -105,61 +92,11 @@ function Base.rand(rng::AbstractRNG, b::LiBelief)
     return State(deposit_samples, t, V_tot, have_mined)
 end
 
-# In: an action (enum)
-# Out: the last digit of the action as an int. This is helpful to clean up some functions so that I can just apply
-# whatever I need to the desired index of the deposits vector
-function get_site_number(a::Action)
-    action_str = string(a)
-    len = length(action_str)
-    deposit_number = Int(action_str[len]) - 48  # -48 because Int() gives me the ascii code
-    return deposit_number
-end
-
-# I'm sure there's some builtin for this but I couldn't find it lol
-function splice(begin_index, end_index, str)
-    result = ""
-    for i = begin_index:end_index
-        result = result * str[i]
-    end
-    return result
-end
-
-
-# Takes in an action, a, and returns whether the action is a MINE action
-# or an EXPLORE action, as a string.
-function get_action_type(a::Action)
-    action_str = string(a)
-    len = length(action_str)
-    action_type = splice(1, len - 1, action_str)
-    return action_type
-end
-
-# Takes in a string version of the action and returns it as the enum type Action
-#! I know this is hardcoded and bad right now
-function str_to_action(s::String)
-    if s == "MINE1"
-        return MINE1
-    elseif s == "MINE2"
-        return MINE2
-    elseif s == "MINE3"
-        return MINE3
-    elseif s == "MINE4"
-        return MINE4
-    elseif s == "EXPLORE1"
-        return EXPLORE1
-    elseif s == "EXPLORE2"
-        return EXPLORE2
-    elseif s == "EXPLORE3"
-        return EXPLORE3
-    else
-        return EXPLORE4
-    end
-end
 
 # Unsure if the right way to do this is to have a product distribution over the 4 deposits? 
 # Pass in an RNG?
 function POMDPs.initialstate(P::LiPOMDP)
-    init_state = State([8.9, 7, 1.8, 5], [1, 2, 3, 4], 0, 0, [false, false, false, false])
+    init_state = State([8.9, 7, 1.8, 5], 0, 0, [false, false, false, false])
     return Deterministic(init_state)
 end
 
@@ -184,30 +121,14 @@ function POMDPs.states(P::LiPOMDP)
     
 end
 
-function can_explore_here(a::Action, b::Union{LiBelief, State, POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}}})
-    action_type = get_action_type(a)
-    site_number = get_site_number(a)
 
-    if action_type == "MINE"
-        return true
-    end
 
-    if isa(b, POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}})
-        b = sample_state_belief(b)
-    end
-
-    return !b.have_mined[site_number]        
-end
-
-# Action function: Returns all possible actions
-#! not sure why I need to have both action functions -- mykel seemed to think that the belief dependent one should suffice for POMCPOW
 function POMDPs.actions(P::LiPOMDP)
     return [MINE1, MINE2, MINE3, MINE4, EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4]
 end
-
 # Action function: now dependent on belief state
 function POMDPs.actions(P::LiPOMDP, b::LiBelief)
-    potential_actions = actions(P)
+    potential_actions = [MINE1, MINE2, MINE3, MINE4, EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4]#actions(P)
     
     # Checks to ensure that we aren't trying to explore at a site we have already mined at
     potential_actions = filter(a -> can_explore_here(a, b), potential_actions)
@@ -238,16 +159,12 @@ end
 
 function POMDPs.reward(P::LiPOMDP, s::State, a::Action)
     # Time and volume delay goal
-    r1 = (s.t >= P.t_goal && s.Vₜ >= P.Vₜ_goal) ? 1 : 0
+    r1 = (s.t >= P.t_goal && s.Vₜ >= P.Vₜ_goal) ? 100 : 0
 
     # Total amount mined thus far
     r2 = s.Vₜ
     
-    action_type = get_action_type(a)
-    action_number = get_site_number(a)
-    
-    # Subtract carbon emissions (if relevant)
-    r3 = (action_type == "MINE") ? P.CO2_emissions[action_number] * -1 : 0
+    r3 = get_action_emission(P, a)
     
     reward = dot([r1, r2, r3], P.obj_weights)
     
@@ -283,7 +200,10 @@ function POMDPs.gen(P::LiPOMDP, s::State, a::Action, rng::AbstractRNG)
     # o is continuous
     o = rand(rng, observation(P, a, next_state))  # Vector of floats
     r = reward(P, s, a)
-    return (sp=next_state, o=o, r=r)  
+
+    out = (sp=next_state, o=o, r=r)  
+    #println(out)
+    return out
 end
 
 # Observation function
@@ -293,13 +213,44 @@ function POMDPs.observation(P::LiPOMDP, a::Action, sp::State)
     # that it's not really important/relevant
     site_number = get_site_number(a)  #1, 2, 3, or 4, basically last character of    
     action_type = get_action_type(a)  # "EXPLORE" or "MINE"
-    temp::Vector{UnivariateDistribution} = [DiscreteNonParametric([-1], [1]), DiscreteNonParametric([-1], [1]), DiscreteNonParametric([-1], [1]), DiscreteNonParametric([-1], [1])]
+
+    sentinel_dist = DiscreteNonParametric([-1], [1])
+    temp::Vector{UnivariateDistribution} = fill(sentinel_dist, 4)
+
+    # handle degenerate case where we have no more Li at this site
+    if sp.deposits[site_number] <= 0
+        site_dist = sentinel_dist
+        return product_distribution(temp)        
+    end
     
     if action_type == "MINE"
-       return product_distribution(temp) 
-    else  # action_type must be "EXPLORE"
+        return product_distribution(temp) 
+    end
+
+    #handles EXPLORE
+    if P.obs_type == "continuous"        
         temp[site_number] = Normal(sp.deposits[site_number], P.σ_obs)
+        #println("returning cts obs type")
         return product_distribution(temp)
+    else    
+        site_dist = Normal(sp.deposits[site_number], P.σ_obs)
+        # sample_point = rand(site_dist)  # Step 1: get us a random sample on that distribution 
+        quantile_vols = quantile(site_dist, P.bin_edges)  # Step 2: get the Li Volume amounts that correspond to each quantile
+        quantile_vols = [round(x, digits=1) for x in quantile_vols]  # Round to 1 decimal place
+
+        # Now get the chunk boundaries (Dashed lines in my drawings)
+        chunk_boundaries = compute_chunk_boundaries(quantile_vols)
+
+        # Now compute the probabilities of each chunk
+        probs = compute_chunk_probs(chunk_boundaries, site_dist)
+        #println("sp: ", sp, "q :", quantile_vols)
+        
+        # I believe the idea was that with other solvers, we need an observation fn that returns an explicit
+        # distribution, not just a sample. So, I decided to use a sparsecat here, but I'm unsure, since all of this doesn't
+        # really seem to be working properly :(
+        #println("site dist: ", site_dist)
+        #println("returning discrete obs type: ", quantile_vols)
+        return SparseCat(quantile_vols, probs)
     end
 end
 
@@ -315,7 +266,7 @@ POMDPs.isterminal(P::LiPOMDP, s::State) = s == P.null_state
 #    k = σ / (σ + P.σ_obs)  # Kalman gain
 #    μ_prime = μ + k * (z - μ)  # Estimate new mean
 #    σ_prime = (1 - k) * σ   # Estimate new uncertainty
-#    return μ_prime, σ_prime
+#    return μ_prime, σx_prime
 #end
 
 # takes in a belief, action, and observation and uses it to update the belief
@@ -325,9 +276,9 @@ function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
     
     if action_type == "EXPLORE"
         bi = b.deposit_dists[site_number]  
-        zi = Array([o[site_number]])
+        zi = o[site_number]
         prior = (bi, std(bi))
-        bi_prime = posterior(prior, Normal, zi)
+        bi_prime = Normal(kalman_step(P, mean(bi), std(bi), zi))#posterior(prior, Normal, zi)
         
         # Default, not including updated belief
         belief = LiBelief(copy(b.deposit_dists), b.t + 1, b.V_tot, copy(b.have_mined))
@@ -360,21 +311,6 @@ function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
     end 
 end
 
-#added new functions
-include("utils.jl")
-
-# POMCPOW Solver
-pomdp = LiPOMDP()
-s0 = pomdp.init_state
-
-solver = POMCPOWSolver(next_action=next_action) #use our own random next_action function
-planner = solve(solver, pomdp)
-b0 = LiBelief([Normal(9, 0.2), Normal(1, 2), Normal(3, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
-
-# actions(pomdp, b0)
-ap, info = action_info(planner, b0, tree_in_info=true)
-tree = D3Tree(info[:tree], init_expand=1)
-inchrome(tree)
 
 # inputs: pomddp, an initial belief, and a sequence of actions. 
 # Runs the updater on said sequence, keeping track of the belief at each time step in a history vector
@@ -403,149 +339,3 @@ function run_sims(P::LiPOMDP, b0::LiBelief, s0::State, action_sequence::Vector{A
     end 
     return belief_history, state_history
 end
-
-# P = LiPOMDP()
-# init_belief = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], 0., 0., [false, false, false, false])
-# init_state = P.init_state
-
-# a = EXPLORE3
-# dist = observation(P, a, init_state)  # Product distribution
-# o = rand(dist) # Vector of floats, index in to proper index
-# new_belief = update(P, init_belief, a, o)
-
-using Plots
-P = LiPOMDP()
-init_belief = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
-init_state = P.init_state
-
-
-# Deposit 1 stuff
-# dep_1_actions = [EXPLORE1, MINE1]
-#action_sequence = [EXPLORE1, EXPLORE1, EXPLORE1, EXPLORE1, MINE1, MINE1]#[rand(dep_1_actions) for x in 1:20]
-action_sequence = [EXPLORE1, EXPLORE2, EXPLORE1, EXPLORE2, MINE1, MINE2]#[rand(dep_1_actions) for x in 1:20]
-
-# Change MersenneTwister(1) to rng
-belief_history, state_history = run_sims(P, init_belief, init_state, action_sequence, MersenneTwister(7))
-times = [b.t for b in belief_history]
-# μs = [mean(b.deposit_dists[1]) for b in belief_history]
-# σs = [std(b.deposit_dists[1]) for b in belief_history]
-# true_v1s = [s.deposits[1] for s in state_history] # actual amount of Li
-
-# plot(times, μs, grid=false, ribbon=σs, fillalpha=0.5, title="Deposit 1 Belief vs. time", xlabel="Time (t)", ylabel="Amount Li in deposit 1", label="μ1", linecolor=:orange, fillcolor=:orange)
-# plot!(times, true_v1s, label="Actual V₁", color=:blue)
-
-belief_history, state_history = run_sims(P, init_belief, init_state, action_sequence, rng)
-times = [b.t for b in belief_history]  # Goes up at top like an iteration counter
-d1_normals = [b.deposit_dists[2] for b in belief_history]
-
-
-@gif for i in 1:length(times)
-    normal = d1_normals[i]
-    if i < 7
-        a = action_sequence[i]
-    else
-        a = "DONE"
-    end    
-    
-    plot(3:0.01:10, (x) -> pdf(normal, x), title = "Iter. $i, a: $a", ylim = (0, 20), xlim = (3, 10), xlabel = "V belief", label= "V belief", legend=:topright, color=:purple)
-end fps = 1
-
-
-## random crap
-    # using D3Trees
-    # solver = POMCPOWSolver()
-    # pomdp = LiPOMDP()
-    # planner = solve(solver, pomdp)
-
-    # # Query an action from the planner and some initial belief
-    # b0 = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], [1, 2, 3, 4], 0.0, 0.0, false)
-    # ap, info = action_info(planner, b0)
-    # ap
-
-    # random_policy = RandomPolicy(pomdp)
-
-    # # Query an action  
-    # b0 = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], [1, 2, 3, 4], 0.0, 0.0, false)
-    # ap, info = action_info(planner, b0)
-    # ap
-
-    # # random_policy = RandomPolicy(pomdp)  # Not passing in a belief updater right now (or an rng but I feel like i should for reproducibility)
-    # # #show_requirements(get_requirements(POMDPs.solve, (solver, pomdp)))
-    # # ap, info = action_info(planner, initialstate(pomdp), tree_in_info=true)
-    # # tree = D3Tree(info[:tree], init_expand=3)
-
-    # # a = action(random_policy, initialstate(pomdp))
-    # # a
-
-    # function run_simulation_new(P::LiPOMDP, b0::LiBelief, s0::State, rng::AbstractRNG)
-    #     b = b0
-    #     s = s0
-    #     total_reward = 0
-    #     belief_history = []
-    #     state_history = []
-    #     action_history = []
-    #     reward_history = []
-    #     push!(belief_history, b)
-    #     push!(state_history, s)
-    #     i = 0
-        
-    #     while !isterminal(P, s)
-    #         a, ai = action_info(planner, b)  # Probably should pass in the planner
-    #         push!(action_history, a)
-            
-    #         sp, o, r = gen(P, s, a, rng)
-    #         push!(reward_history, r)
-    #         total_reward += r
-    #         o = Float64.(o)
-    #         b = update(P, b, a, o) 
-    #        push!(belief_history, b)
-
-    #         s = deepcopy(sp)
-    #         push!(state_history, s)
-    #         i=i+1
-    #         if i > 50
-    #             break
-    #         end
-    #     end
-    #     return belief_history, state_history, action_history, reward_history, total_reward
-    # end
-
-
-    # function run_simulation_random_policy(P::LiPOMDP, b0::LiBelief, s0::State, rng::AbstractRNG)
-    #     b = b0
-    #     s = s0
-    #     total_reward = 0
-    #     belief_history = []
-    #     state_history = []
-    #     action_history = []
-    #     reward_history = []
-    #     push!(belief_history, b)
-    #     push!(state_history, s)
-    #     i = 0
-        
-    #     while !isterminal(P, s)
-    #         a = action(random_policy, b)
-    #         push!(action_history, a)
-            
-    #         sp, o, r = gen(pomdp, s, a, rng)
-    #         push!(reward_history, r)
-    #         total_reward += r
-    #         o = Float64.(o)
-    #         b = update(P, b, a, o) 
-    #        push!(belief_history, b)
-
-    #         s = deepcopy(sp)
-    #         push!(state_history, s)
-    #         i=i+1
-    #         if i > 50
-    #             break
-    #         end
-    #     end
-    #     return belief_history, state_history, action_history, reward_history, total_reward
-    # end
-
-    # b0 = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], [1, 2, 3, 4], 0.0, 0.0, false)
-    # s0 = State([8.9, 7, 1.8, 5], [1, 2, 3, 4], 0, 0, false)
-
-    # belief_history_rand, state_history_rand, action_history_rand, reward_history_rand, total_reward_rand = run_simulation_random_policy(pomdp, b0, s0, rng)
-    # belief_history, state_history, action_history, reward_history, total_reward = run_simulation_new(pomdp, b0, s0, rng)
