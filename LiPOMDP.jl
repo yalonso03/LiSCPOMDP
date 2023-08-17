@@ -126,6 +126,7 @@ end
 function POMDPs.actions(P::LiPOMDP)
     return [MINE1, MINE2, MINE3, MINE4, EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4]
 end
+
 # Action function: now dependent on belief state
 function POMDPs.actions(P::LiPOMDP, b::LiBelief)
     potential_actions = [MINE1, MINE2, MINE3, MINE4, EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4]#actions(P)
@@ -235,7 +236,9 @@ function POMDPs.observation(P::LiPOMDP, a::Action, sp::State)
         return product_distribution(temp)
     else    
         site_dist = Normal(sp.deposits[site_number], P.σ_obs)
-        # sample_point = rand(site_dist)  # Step 1: get us a random sample on that distribution 
+        # sample_point = rand(site_dist)  # Step 1: get us a random sample on that distribution
+
+        #! change this here 
         quantile_vols = quantile(site_dist, P.bin_edges)  # Step 2: get the Li Volume amounts that correspond to each quantile
         quantile_vols = [round(x, digits=1) for x in quantile_vols]  # Round to 1 decimal place
 
@@ -264,54 +267,13 @@ POMDPs.isterminal(P::LiPOMDP, s::State) = s == P.null_state
 
 # kalman_step is used in the belief updater update function
 function kalman_step(P::LiPOMDP, μ::Float64, σ::Float64, z::Float64)
-   k = σ / (σ + P.σ_obs)  # Kalman gain
-   μ_prime = μ + k * (z - μ)  # Estimate new mean
-   σ_prime = (1 - k) * σ   # Estimate new uncertainty
-   return μ_prime, σ_prime
+    k = σ / (σ + P.σ_obs)  # Kalman gain
+    μ_prime = μ + k * (z - μ)  # Estimate new mean
+    σ_prime = (1 - k) * σ   # Estimate new uncertainty
+    return μ_prime, σ_prime
 end
 
 # takes in a belief, action, and observation and uses it to update the belief
-# function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
-#     action_type = get_action_type(a)
-#     site_number = get_site_number(a)
-    
-#     if action_type == "EXPLORE"
-#         bi = b.deposit_dists[site_number]  
-#         zi = o[site_number]
-#         prior = (bi, std(bi))
-#         bi_prime = Normal(kalman_step(P, mean(bi), std(bi), zi))#posterior(prior, Normal, zi)
-        
-#         # Default, not including updated belief
-#         belief = LiBelief(copy(b.deposit_dists), b.t + 1, b.V_tot, copy(b.have_mined))
-        
-#         # Now, at the proper site number, update to contain the updated belief
-#         belief.deposit_dists[site_number] = bi_prime
-        
-#         return belief
-
-#     else # a must be a MINE action
-#         bi = b.deposit_dists[site_number]
-#         μi = mean(bi)
-#         σi = std(bi)
-        
-#         if μi >= 1
-#             μi_prime = μi - 1
-#             n_units_mined = 1  # we were able to mine a unit
-#         else 
-#             μi_prime = μi
-#             n_units_mined = 0  # we did NOT mine a unit
-#         end
-        
-#         # Default, not including updated belief
-#         belief = LiBelief(copy(b.deposit_dists), b.t + 1, b.V_tot + n_units_mined, copy(b.have_mined))
-        
-#         # Now, at the proper site number, update to contain the updated belief
-#         belief.deposit_dists[site_number] = Normal(μi_prime, σi)
-#         belief.have_mined[site_number] = true  # Update the mining history
-#         return belief
-#     end 
-# end
-
 function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
     # EXPLORE actions: Adjust mean of the distribution corresponding to the proper deposit, using the Kalman
     # predict/update step (see kalman_step function above). Time increases by 1 in the belief.
@@ -326,14 +288,15 @@ function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
         zi = o[site_number]
         μ_prime, σ_prime = kalman_step(P, μi, σi, zi)
         bi_prime = Normal(μ_prime, σ_prime)
-
+        
         # Default, not including updated belief
         belief = LiBelief([b.deposit_dists[1], b.deposit_dists[2], b.deposit_dists[3], b.deposit_dists[4]], b.t + 1, b.V_tot, b.have_mined)
-
+        
         # Now, at the proper site number, update to contain the updated belief
         belief.deposit_dists[site_number] = bi_prime
         
         return belief
+
     # MINE actions: Shifts our mean of the distribution corresponding to the proper deposit down by 1 (since we
     # have just mined one unit deterministically). Does not affect certainty at all. 
     else # a must be a MINE action
@@ -348,7 +311,7 @@ function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
             μi_prime = μi
             n_units_mined = 0  # we did NOT mine a unit
         end
-
+        
         # Default, not including updated belief
         belief = LiBelief([b.deposit_dists[1], b.deposit_dists[2], b.deposit_dists[3], b.deposit_dists[4]], b.t + 1, b.V_tot + n_units_mined, b.have_mined)
         # Now, at the proper site number, update to contain the updated belief
@@ -356,6 +319,91 @@ function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
         return belief
     end 
 end
+
+# POMCPOW Solver
+# solver = POMCPOWSolver()
+# pomdp = LiPOMDP()
+# planner = solve(solver, pomdp)
+# b0 = LiBelief([Normal(9, 0.2), Normal(1, 2), Normal(3, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
+# actions(pomdp, b0)
+# ap, info = action_info(planner, b0, tree_in_info=true)
+# tree = D3Tree(info[:tree], init_expand=1)
+# inchrome(tree)
+
+# inputs: pomddp, an initial belief, and a sequence of actions. 
+# Runs the updater on said sequence, keeping track of the belief at each time step in a history vector
+# returns: the history vector of all of the beliefs, and all true states 
+
+function run_sims(P::LiPOMDP, b0::LiBelief, s0::State, action_sequence::Vector{Action}, rng::AbstractRNG)
+    b = b0
+    s = s0
+    belief_history = []
+    state_history = []
+    push!(belief_history, b)
+    push!(state_history, s)
+    
+    for a in action_sequence
+        sp, o, r = gen(P,s,a, rng)  # from anthony
+        o = Float64.(o)
+        new_belief = update(P, b, a, o)
+        b = new_belief
+        s = sp
+        # Changed this from s -> sp
+        if isterminal(P, sp)
+            break
+        end
+        push!(belief_history, new_belief)
+        push!(state_history, sp)
+    end 
+    return belief_history, state_history
+end
+
+P = LiPOMDP()
+init_belief = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
+init_state = P.init_state
+
+a = EXPLORE3
+dist = observation(P, a, init_state)  # Product distribution
+o = rand(dist) # Vector of floats, index in to proper index
+new_belief = update(P, init_belief, a, o)
+
+using Plots
+P = LiPOMDP()
+init_belief = LiBelief([Normal(9, 0.2), Normal(5, 2), Normal(2, 0.2), Normal(9, 4)], 0.0, 0.0, [false, false, false, false])
+init_state = P.init_state
+
+
+# Deposit 1 stuff
+dep_1_actions = [EXPLORE1, MINE1]
+action_sequence = [EXPLORE1, EXPLORE1, MINE1, EXPLORE1, MINE1, EXPLORE1]#[rand(dep_1_actions) for x in 1:20]
+
+# Change MersenneTwister(1) to rng
+belief_history, state_history = run_sims(P, init_belief, init_state, action_sequence, MersenneTwister(7))
+times = [b.t for b in belief_history]
+μs = [mean(b.deposit_dists[1]) for b in belief_history]
+σs = [std(b.deposit_dists[1]) for b in belief_history]
+true_v1s = [s.deposits[1] for s in state_history] # actual amount of Li
+
+plot(times, μs, grid=false, ribbon=σs, fillalpha=0.5, title="Deposit 1 Belief vs. time", xlabel="Time (t)", ylabel="Amount Li in deposit 1", label="μ1", linecolor=:orange, fillcolor=:orange)
+plot!(times, true_v1s, label="Actual V₁", color=:blue)
+
+belief_history, state_history = run_sims(P, init_belief, init_state, action_sequence, rng)
+times = [b.t for b in belief_history]  # Goes up at top like an iteration counter
+d1_normals = [b.deposit_dists[1] for b in belief_history]
+
+
+@gif for i in 1:length(times)
+    normal = d1_normals[i]
+    if i < 7
+        a = action_sequence[i]
+    else
+        a = "DONE"
+    end    
+    
+    plot(5:0.01:10, (x) -> pdf(normal, x), title = "Iter. $i, a: $a", ylim = (0, 20), xlim = (5, 10), xlabel = "V₁ belief", label= "V₁ belief", legend=:topright, color=:purple)
+end fps = 2
+
+
 
 
 
