@@ -30,7 +30,7 @@ pomdp = LiPOMDP(obs_type="continous")
 
 hr = HistoryRecorder(max_steps=11)
 hist = simulate(hr, pomdp, planner)
-rhist = simulate(hr, pomdp, RandomPolicy(pomdp))
+rhist = simulate(hr, pomdp, RandomPolicy(pomdp))  #! should I seed this
 bhist = simulate(hr, pomdp, pomcp_planner)
 println("""
     Cumulative Discounted Reward (for 1 simulation)

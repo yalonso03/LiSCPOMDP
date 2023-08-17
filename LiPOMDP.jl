@@ -101,7 +101,7 @@ function POMDPs.initialstate(P::LiPOMDP)
 end
 
 # Continuous state space
-# NEED TO uPDATE THIS TO ACCOUNT FOR NEW ADDITIONS TO THE STATE
+#! NEED TO uPDATE THIS TO ACCOUNT FOR NEW ADDITIONS TO THE STATE
 function POMDPs.states(P::LiPOMDP)
     # Min and max amount per singular deposit
     V_deposit_min = 0
@@ -158,12 +158,13 @@ end
 # The three parts of the reward are then weighted by the obj_weights vector and returned.
 
 function POMDPs.reward(P::LiPOMDP, s::State, a::Action)
-    # Time and volume delay goal
+    # See if we achieve both time delay goal and volume amount goal
     r1 = (s.t >= P.t_goal && s.Vₜ >= P.Vₜ_goal) ? 100 : 0
 
-    # Total amount mined thus far
+    # Total amount of Li mined thus far
     r2 = s.Vₜ
     
+    # Calculates how much CO2 taking this action will emit
     r3 = get_action_emission(P, a)
     
     reward = dot([r1, r2, r3], P.obj_weights)
@@ -262,34 +263,81 @@ POMDPs.discount(P::LiPOMDP) = P.γ
 POMDPs.isterminal(P::LiPOMDP, s::State) = s == P.null_state
 
 # kalman_step is used in the belief updater update function
-#function kalman_step(P::LiPOMDP, μ::Float64, σ::Float64, z::Float64)
-#    k = σ / (σ + P.σ_obs)  # Kalman gain
-#    μ_prime = μ + k * (z - μ)  # Estimate new mean
-#    σ_prime = (1 - k) * σ   # Estimate new uncertainty
-#    return μ_prime, σx_prime
-#end
+function kalman_step(P::LiPOMDP, μ::Float64, σ::Float64, z::Float64)
+   k = σ / (σ + P.σ_obs)  # Kalman gain
+   μ_prime = μ + k * (z - μ)  # Estimate new mean
+   σ_prime = (1 - k) * σ   # Estimate new uncertainty
+   return μ_prime, σ_prime
+end
 
 # takes in a belief, action, and observation and uses it to update the belief
+# function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
+#     action_type = get_action_type(a)
+#     site_number = get_site_number(a)
+    
+#     if action_type == "EXPLORE"
+#         bi = b.deposit_dists[site_number]  
+#         zi = o[site_number]
+#         prior = (bi, std(bi))
+#         bi_prime = Normal(kalman_step(P, mean(bi), std(bi), zi))#posterior(prior, Normal, zi)
+        
+#         # Default, not including updated belief
+#         belief = LiBelief(copy(b.deposit_dists), b.t + 1, b.V_tot, copy(b.have_mined))
+        
+#         # Now, at the proper site number, update to contain the updated belief
+#         belief.deposit_dists[site_number] = bi_prime
+        
+#         return belief
+
+#     else # a must be a MINE action
+#         bi = b.deposit_dists[site_number]
+#         μi = mean(bi)
+#         σi = std(bi)
+        
+#         if μi >= 1
+#             μi_prime = μi - 1
+#             n_units_mined = 1  # we were able to mine a unit
+#         else 
+#             μi_prime = μi
+#             n_units_mined = 0  # we did NOT mine a unit
+#         end
+        
+#         # Default, not including updated belief
+#         belief = LiBelief(copy(b.deposit_dists), b.t + 1, b.V_tot + n_units_mined, copy(b.have_mined))
+        
+#         # Now, at the proper site number, update to contain the updated belief
+#         belief.deposit_dists[site_number] = Normal(μi_prime, σi)
+#         belief.have_mined[site_number] = true  # Update the mining history
+#         return belief
+#     end 
+# end
+
 function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
+    # EXPLORE actions: Adjust mean of the distribution corresponding to the proper deposit, using the Kalman
+    # predict/update step (see kalman_step function above). Time increases by 1 in the belief.
+    # Return new belief, with everything else untouched (EXPLORE only allows us to gain info about one site) 
     action_type = get_action_type(a)
     site_number = get_site_number(a)
     
     if action_type == "EXPLORE"
-        bi = b.deposit_dists[site_number]  
+        bi = b.deposit_dists[site_number]  # This is a normal distribution
+        μi = mean(bi)
+        σi = std(bi)
         zi = o[site_number]
-        prior = (bi, std(bi))
-        bi_prime = Normal(kalman_step(P, mean(bi), std(bi), zi))#posterior(prior, Normal, zi)
-        
+        μ_prime, σ_prime = kalman_step(P, μi, σi, zi)
+        bi_prime = Normal(μ_prime, σ_prime)
+
         # Default, not including updated belief
-        belief = LiBelief(copy(b.deposit_dists), b.t + 1, b.V_tot, copy(b.have_mined))
-        
+        belief = LiBelief([b.deposit_dists[1], b.deposit_dists[2], b.deposit_dists[3], b.deposit_dists[4]], b.t + 1, b.V_tot, b.have_mined)
+
         # Now, at the proper site number, update to contain the updated belief
         belief.deposit_dists[site_number] = bi_prime
         
         return belief
-
+    # MINE actions: Shifts our mean of the distribution corresponding to the proper deposit down by 1 (since we
+    # have just mined one unit deterministically). Does not affect certainty at all. 
     else # a must be a MINE action
-        bi = b.deposit_dists[site_number]
+        bi = b.deposit_dists[1]
         μi = mean(bi)
         σi = std(bi)
         
@@ -300,16 +348,16 @@ function update(P::LiPOMDP, b::LiBelief, a::Action, o::Vector{Float64})
             μi_prime = μi
             n_units_mined = 0  # we did NOT mine a unit
         end
-        
+
         # Default, not including updated belief
-        belief = LiBelief(copy(b.deposit_dists), b.t + 1, b.V_tot + n_units_mined, copy(b.have_mined))
-        
+        belief = LiBelief([b.deposit_dists[1], b.deposit_dists[2], b.deposit_dists[3], b.deposit_dists[4]], b.t + 1, b.V_tot + n_units_mined, b.have_mined)
         # Now, at the proper site number, update to contain the updated belief
         belief.deposit_dists[site_number] = Normal(μi_prime, σi)
-        belief.have_mined[site_number] = true  # Update the mining history
         return belief
     end 
 end
+
+
 
 
 # inputs: pomddp, an initial belief, and a sequence of actions. 
@@ -325,7 +373,7 @@ function run_sims(P::LiPOMDP, b0::LiBelief, s0::State, action_sequence::Vector{A
     push!(state_history, s)
     
     for a in action_sequence
-        sp, o, r = gen(P,s,a, rng)  # from anthony
+        sp, o, r = gen(P,s,a, rng) 
         o = Float64.(o)
         new_belief = update(P, b, a, o)
         b = new_belief
