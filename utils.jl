@@ -137,6 +137,7 @@ function get_all_states(b::POMCPOW.StateBelief{POWNodeBelief{State, Action, Any,
     return states
 end
 
+
 function compute_portion_below_threshold(P, b, idx::Int64)
     if isa(b, LiBelief)
         dist = b.deposit_dists[idx]
@@ -146,6 +147,8 @@ function compute_portion_below_threshold(P, b, idx::Int64)
     else
         sampled_belief = get_all_states(b)
         n_rows = length(sampled_belief)
+
+        #! 
         num_below_threshold = sum(row[idx] < P.min_n_units for row in sampled_belief)
         portion_below_threshold = num_below_threshold / n_rows
     end
