@@ -30,6 +30,7 @@ function run_sims(P::LiPOMDP, b0::LiBelief, s0::State, action_sequence::Vector{A
     for a in action_sequence
         sp, o, r = gen(P,s,a, rng)  # from anthony
         o = Float64.(o)
+        # Maybe here instead of passing in the vector i need to select the right entry and pass that into update
         new_belief = update(P, b, a, o)
         b = new_belief
         s = sp

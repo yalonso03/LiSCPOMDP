@@ -208,6 +208,7 @@ function POMDPs.gen(P::LiPOMDP, s::State, a::Action, rng::AbstractRNG)
     return out
 end
 
+
 # Observation function
 function POMDPs.observation(P::LiPOMDP, a::Action, sp::State)
     # When we take an action to EXPLORE one of the four sites, we only really gain an observation on said
@@ -273,7 +274,7 @@ function kalman_step(P::LiPOMDP, μ::Float64, σ::Float64, z::Float64)
     return μ_prime, σ_prime
 end
 
-struct LiBeliefUpdater 
+struct LiBeliefUpdater <: Updater
     P::LiPOMDP
 end
 
@@ -304,7 +305,7 @@ function update(up::LiBeliefUpdater, b::LiBelief, a::Action, o::Vector{Float64})
     # MINE actions: Shifts our mean of the distribution corresponding to the proper deposit down by 1 (since we
     # have just mined one unit deterministically). Does not affect certainty at all. 
     else # a must be a MINE action
-        bi = b.deposit_dists[1]
+        bi = b.deposit_dists[site_number]
         μi = mean(bi)
         σi = std(bi)
         

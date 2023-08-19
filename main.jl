@@ -39,7 +39,7 @@ rhist = simulate(hr, pomdp, FunctionPolicy((b) -> rand(actions(pomdp, b))), up, 
 bhist = simulate(hr, pomdp, pomcp_planner, up, b0)
 println("""
     Cumulative Discounted Reward (for 1 simulation)
-        Random: $(eval_policy(pomdp, rhist)
+        Random: $(eval_policy(pomdp, rhist))
         POMCPOW: $(eval_policy(pomdp, hist)),
         POMCP: $(eval_policy(pomdp, bhist)).
     """)
