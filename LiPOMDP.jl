@@ -62,7 +62,7 @@ rng = MersenneTwister(1)
     t_goal = 10
     σ_obs = 0.1
     Vₜ_goal = 5
-    γ = 0.9
+    γ = 0.98
     n_deposits = 4 
     bin_edges = [0.25, 0.5, 0.75]  # Used to discretize observations
     obs_type = "continuous"
@@ -120,12 +120,6 @@ function POMDPs.states(P::LiPOMDP)
     return 𝒮
     
 end
-
-
-
-# function POMDPs.actions(P::LiPOMDP)
-#     return [MINE1, MINE2, MINE3, MINE4, EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4]
-# end
 
 # Action function: now dependent on belief state
 function POMDPs.actions(P::LiPOMDP, b)
@@ -217,7 +211,7 @@ function POMDPs.observation(P::LiPOMDP, a::Action, sp::State)
     site_number = get_site_number(a)  #1, 2, 3, or 4, basically last character of    
     action_type = get_action_type(a)  # "EXPLORE" or "MINE"
 
-    sentinel_dist = DiscreteNonParametric([-1], [1])
+    sentinel_dist = DiscreteNonParametric([-1.], [1.])
     temp::Vector{UnivariateDistribution} = fill(sentinel_dist, 4)
 
     # handle degenerate case where we have no more Li at this site
@@ -239,9 +233,8 @@ function POMDPs.observation(P::LiPOMDP, a::Action, sp::State)
         site_dist = Normal(sp.deposits[site_number], P.σ_obs)
         # sample_point = rand(site_dist)  # Step 1: get us a random sample on that distribution
 
-        #! change this here 
-        quantile_vols = quantile(site_dist, P.bin_edges)  # Step 2: get the Li Volume amounts that correspond to each quantile
-        quantile_vols = [round(x, digits=1) for x in quantile_vols]  # Round to 1 decimal place
+        quantile_vols = collect(0.:1.:10.)#quantile(site_dist, P.bin_edges)  # Step 2: get the Li Volume amounts that correspond to each quantile
+        #quantile_vols = [x for x in quantile_vols]  # Round to 1 decimal place
 
         # Now get the chunk boundaries (Dashed lines in my drawings)
         chunk_boundaries = compute_chunk_boundaries(quantile_vols)
@@ -255,7 +248,8 @@ function POMDPs.observation(P::LiPOMDP, a::Action, sp::State)
         # really seem to be working properly :(
         #println("site dist: ", site_dist)
         #println("returning discrete obs type: ", quantile_vols)
-        return SparseCat(quantile_vols, probs)
+        temp[site_number] = DiscreteNonParametric(quantile_vols, probs)
+        return product_distribution(temp)
     end
 end
 
@@ -278,8 +272,19 @@ struct LiBeliefUpdater <: Updater
     P::LiPOMDP
 end
 
+function POMDPs.initialize_belief(up::Updater, s::State)
+    # Initialize belief to be a vector of 4 normal distributions, one for each deposit
+    # Each normal distribution has mean equal to the amount of Li in that deposit, and
+    # standard deviation equal to P.σ_obs
+    deposit_dists = [Normal(s.deposits[1], 0.2), Normal(s.deposits[2], 0.2), Normal(s.deposits[3], 0.2), Normal(s.deposits[4], 2.0)]
+    t = s.t
+    V_tot = s.Vₜ
+    have_mined = s.have_mined
+    return LiBelief(deposit_dists, t, V_tot, have_mined)
+end
+
 # takes in a belief, action, and observation and uses it to update the belief
-function update(up::LiBeliefUpdater, b::LiBelief, a::Action, o::Vector{Float64})
+function POMDPs.update(up::Updater, b::LiBelief, a::Action, o::Vector{Float64})
     # EXPLORE actions: Adjust mean of the distribution corresponding to the proper deposit, using the Kalman
     # predict/update step (see kalman_step function above). Time increases by 1 in the belief.
     # Return new belief, with everything else untouched (EXPLORE only allows us to gain info about one site) 
@@ -325,5 +330,13 @@ function update(up::LiBeliefUpdater, b::LiBelief, a::Action, o::Vector{Float64})
     end 
 end
 
+struct RandomPolicy <: Policy
+    pomdp::LiPOMDP
+end
 
-
+# Given a policy, a belief state, and an RNG, choose a random action from available actions
+function POMDPs.action(p::RandomPolicy, b::LiBelief)
+    
+    potential_actions = actions(p.pomdp, b)
+    return rand(potential_actions)
+end

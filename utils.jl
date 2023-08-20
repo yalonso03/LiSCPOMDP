@@ -2,20 +2,55 @@ using Distributions
 using ParticleFilters
 
 
-function eval_policy(P, hist)
-    tot_r = 0.0
-    tot_emission = 0.0
-    for (s, a, b, o, r) in hist
-        #@show s, a, r
-        tot_r = r
-        tot_emission -= get_action_emission(P, a)
+function simulate_policy(pomdp, policy, up, b0, s0; max_steps=10, rng=MersenneTwister(1))
+    r_total = 0.
+    r_disc = 0.
+    e_total = 0.
+    e_disc = 0.
+    t = 0
+    d = 1.
+    b = deepcopy(b0)
+    s = deepcopy(s0)
+    while (!isterminal(pomdp, s) && t < max_steps)
+        t += 1
+        a = action(policy, b)
+        (s, o, r) = gen(pomdp, s, a, rng)
+        b = update(up, b, a, o)
+        e = get_action_emission(pomdp, a)
+        r_total += r
+        r_disc += r*d        
+        e_total += e
+        e_disc += e*d
+        d *= discount(pomdp)
+        #@show(t=t, s=s, a=a, r=r, o=o)
     end
-
-    (s, a, b, o, r)  = hist[end]
-    tot_V = s.Vₜ
-
-    return (discounted_r = round(discounted_reward(hist), digits=2), tot_r=round(tot_r, digits=2), tot_emission=tot_emission, tot_V=tot_V)
+    return (rdisc=r_disc, edisc=e_disc, rtot=r_total, etot=e_total, vt=s.Vₜ)
 end
+
+function simulate_mcts(pomdp, policy, s0; max_steps=10, rng=MersenneTwister(1))
+    r_total = 0.
+    r_disc = 0.
+    e_total = 0.
+    e_disc = 0.
+    t = 0
+    d = 1.
+    s = deepcopy(s0)
+    while (!isterminal(pomdp, s) && t < max_steps)
+        t += 1
+        a = action(policy, s)
+        (s, o, r) = gen(pomdp, s, a, rng)
+        e = get_action_emission(pomdp, a)
+        r_total += r
+        r_disc += r*d        
+        e_total += e
+        e_disc += e*d
+        d *= discount(pomdp)
+        #@show(t=t, s=s, a=a, r=r, o=o)
+    end
+    return (rdisc=r_disc, edisc=e_disc, rtot=r_total, etot=e_total, vt=s.Vₜ)
+end
+
+
 function compute_chunk_boundaries(quantile_vols::Vector{Float64})
     n = length(quantile_vols)
     @assert n > 0 "quantile_vols must not be empty"
@@ -114,18 +149,6 @@ function sample_state_belief(b::POMCPOW.StateBelief{POWNodeBelief{State, Action,
     
     b_dist = b.sr_belief.dist
 
-    function bin_elements(v)
-        return [x < 4 ? 2 : (x <= 8 ? 6 : 10) for x in v]
-    end
-    
-
-    if bin_beliefstate
-        new_state = deepcopy(b_dist.items)
-        for (i, state) in enumerate(b_dist.items)
-            b_dist.items[i][1].deposits = bin_elements(state[1].deposits)
-        end
-    end
-
     out =  rand(b_dist)[1]
     return out
 end
@@ -137,12 +160,16 @@ function get_all_states(b::POMCPOW.StateBelief{POWNodeBelief{State, Action, Any,
     return states
 end
 
+function get_all_states(s::State)
+    return [s.deposits]
+end
+
 
 function compute_portion_below_threshold(P, b, idx::Int64)
     if isa(b, LiBelief)
         dist = b.deposit_dists[idx]
         portion_below_threshold = cdf(dist, P.min_n_units)
-    elseif isa(b, ParticleCollection{State})
+    elseif isa(b, ParticleCollection{State}) || isa(b, State)
         portion_below_threshold = 0.
     else
         sampled_belief = get_all_states(b)
@@ -153,31 +180,4 @@ function compute_portion_below_threshold(P, b, idx::Int64)
         portion_below_threshold = num_below_threshold / n_rows
     end
     return portion_below_threshold
-end
-
-function next_action(
-    P,
-    b,
-    h, 
-    a::Union{Action, Nothing}=nothing, 
-    arg::Union{Any, Nothing}=nothing,  
-    b0::Union{LiBelief, Nothing}=nothing
-)
-
-    potential_actions = [MINE1, MINE2, MINE3, MINE4, EXPLORE1, EXPLORE2, EXPLORE3, EXPLORE4]
-
-    # Checks to ensure that we aren't trying to explore at a site we have already mined at
-    potential_actions = filter(a -> can_explore_here(a, b), potential_actions)
-
-    for i = 1:4
-        portion_below_threshold = compute_portion_below_threshold(P, b, i)
-        if portion_below_threshold > P.cdf_threshold  # BAD!
-            bad_action_str = "MINE" * string(i)
-            bad_action = str_to_action(bad_action_str)
-            # Ensure that this bad_action is not in potential_actions
-            potential_actions = filter(a -> a != bad_action, potential_actions)
-        end   
-    end 
-    
-    return rand(potential_actions)
 end

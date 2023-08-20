@@ -2,44 +2,45 @@ using POMDPs
 using POMCPOW
 using POMDPModels
 using POMDPTools
-using BasicPOMCP
+using MCTS
 
 include("LiPOMDP.jl")
 include("utils.jl")
 
 
 # POMCPOW Solver
-# pomdp = LiPOMDP(obs_type="discrete")
-pomdp = LiPOMDP(obs_type="continous")
-
-s0 = pomdp.init_state
-
-
-solver = POMCPOWSolver(tree_queries=100, estimate_value = 0) # Estimate value should fix the previous problem with action functions
-planner = solve(solver, pomdp)
-b0 = LiBelief([Normal(9, 0.2), Normal(3, 0.2), Normal(3, 0.2), Normal(9, 2.0)], 0.0, 0.0, [false, false, false, false])
+pomdp = LiPOMDP() #always use continous and use POMCPOW obs widening params to control the discretization
 up = LiBeliefUpdater(pomdp)
+s0 = pomdp.init_state
+b0 = initialize_belief(up, s0)
 
-a= action(planner, b0)
+# test model
+# a= action(planner, b0)
+# rng = MersenneTwister(1)
+# (sp, o, r) = gen(pomdp, s0, a, rng)
+# b1 =update(up, b0, a, o) 
+
+
+# POMCP Solver
+println("POMCPOW Solver")
+solver = POMCPOWSolver(tree_queries=1000, max_depth=20, estimate_value = 0., k_observation=0.1, alpha_observation=0.1) # Estimate value should fix the previous problem with action functions
+planner = solve(solver, pomdp)
 ap, info = action_info(planner, b0, tree_in_info=true)
 tree = D3Tree(info[:tree], init_expand=1)
-inchrome(tree)
+#inchrome(tree)
 
+# random planner
+random_planner = RandomPolicy(pomdp) #! should I seed this
 
-pomcp_planner = solve(solver, pomdp)
+println("==========start simulations==========")
+# using manual simulation to extract the metrics of interest
+println("simulating random policy")
+sim_random = simulate_policy(pomdp, random_planner, up, b0, s0, max_steps=15)
+println("simulating pomcpow policy")
+sim_pomcpow = simulate_policy(pomdp, planner, up, b0, s0, max_steps=15)
 
-println("solved, going to simulate")
-# pomdp = LiPOMDP(obs_type="continous")
-
-# updater(planner)
-
-hr = HistoryRecorder(max_steps=11)
-hist = simulate(hr, pomdp, planner, up, b0)
-rhist = simulate(hr, pomdp, FunctionPolicy((b) -> rand(actions(pomdp, b))), up, b0)  #! should I seed this
-bhist = simulate(hr, pomdp, pomcp_planner, up, b0)
 println("""
-    Cumulative Discounted Reward (for 1 simulation)
-        Random: $(eval_policy(pomdp, rhist))
-        POMCPOW: $(eval_policy(pomdp, hist)),
-        POMCP: $(eval_policy(pomdp, bhist)).
+    Evaluation (for 1 simulation)        
+        POMCPOW: $(sim_pomcpow),  #! check why it always explores
+        RANDOM: $(sim_random).
     """)
