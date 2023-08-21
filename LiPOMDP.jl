@@ -209,23 +209,27 @@ function POMDPs.gen(P::LiPOMDP, s::State, a::Action, rng::AbstractRNG)
     next_state.t = s.t + 1  # Increase time by 1 in all cases
 
     if s.t >= P.t_goal && s.Vₜ >= P.Vₜ_goal  # If we've reached all our goals, we can terminate
-        next_state = P.null_state
-    end
+        next_state = deepcopy(P.null_state)
 
-    action_type = get_action_type(a)
-    site_number = get_site_number(a)
+    else
 
-    # If we choose to MINE, so long as there is Li available to us, decrease amount in deposit by one unit
-    # and increase total amount mined Vₜ by 1 unit. We do not have any transitions for EXPLORE actions because 
-    # exploring does not affect state
-    if action_type == "MINE" && s.deposits[site_number] >= 1
-        next_state.deposits[site_number] = s.deposits[site_number] - 1
-        next_state.Vₜ = s.Vₜ + 1
-    end
+        
 
-    # If we're mining, update state to reflect that we now have mined and can no longer explore
-    if action_type == "MINE"
-        next_state.have_mined[site_number] = true
+        action_type = get_action_type(a)
+        site_number = get_site_number(a)
+
+        # If we choose to MINE, so long as there is Li available to us, decrease amount in deposit by one unit
+        # and increase total amount mined Vₜ by 1 unit. We do not have any transitions for EXPLORE actions because 
+        # exploring does not affect state
+        if action_type == "MINE" && s.deposits[site_number] >= 1
+            next_state.deposits[site_number] = s.deposits[site_number] - 1
+            next_state.Vₜ = s.Vₜ + 1
+        end
+
+        # If we're mining, update state to reflect that we now have mined and can no longer explore
+        if action_type == "MINE"
+            next_state.have_mined[site_number] = true
+        end
     end
     # Now sample an observation and get the reward as well
 

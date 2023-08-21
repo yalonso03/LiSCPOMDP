@@ -16,8 +16,8 @@ up = LiBeliefUpdater(pomdp)
 s0 = pomdp.init_state
 b0 = initialize_belief(up, s0)
 
-n_reps = 100
-max_steps = 15
+n_reps = 20
+max_steps = 20
 
 #planners
 random_planner = RandomPolicy(pomdp)

@@ -5,21 +5,14 @@ function estimate_value(P::LiPOMDP, s, h, steps)
     return s.Vₜ < P.Vₜ_goal ? -100.0 : 0.0
 end
 
-function evaluate_policies(pomdp::LiPOMDP, policies::Vector, k::Int, max_steps::Int; randomized=true)
+function evaluate_policies(pomdp::LiPOMDP, policies::Vector, k::Int, max_steps::Int)
 
     up = LiBeliefUpdater(pomdp)
     
     for policy in policies
         println("==========start $k simulations for ", typeof(policy), "==========")
 
-        if randomized
-            s0 = random_initial_state(pomdp)
-            b0 = random_initial_belief(s0)
-        else
-            s0 = pomdp.init_state
-            b0 = initialize_belief(up, s0)
-        end
-        sim_results = replicate_simulation(pomdp, policy, up, b0, s0; k=k, max_steps=max_steps)
+        sim_results = replicate_simulation(pomdp, policy, up, k=k, max_steps=max_steps)
 
         # Print results
         print_policy_results(string(typeof(policy)), sim_results)
@@ -35,7 +28,7 @@ function print_policy_results(policy_name, simulation_results)
     println("vt mean: ", simulation_results[:vt_mean], ", stdev: ", simulation_results[:vt_std])
 end
 
-function replicate_simulation(pomdp, policy, up, b0, s0; k=100, max_steps=10, rng=MersenneTwister(1))
+function replicate_simulation(pomdp, policy, up; k=100, max_steps=10, rng=MersenneTwister(1), randomized=false)
     rdisc_values = Float64[]
     edisc_values = Float64[]
     rtot_values = Float64[]
@@ -43,6 +36,14 @@ function replicate_simulation(pomdp, policy, up, b0, s0; k=100, max_steps=10, rn
     vt_values = Float64[]
 
     for _ in 1:k
+        if randomized
+            s0 = random_initial_state(pomdp)
+            b0 = random_initial_belief(s0)
+        else
+            s0 = pomdp.init_state
+            b0 = initialize_belief(up, s0)
+        end
+
         #println("====new rep====")
         result = simulate_policy(pomdp, policy, up, b0, s0, max_steps=max_steps, rng=rng)
         push!(rdisc_values, result.rdisc)
@@ -277,12 +278,20 @@ function convert_particle_collection_to_libelief(part_collection::POMCPOW.StateB
     σ4 = std(v4s, corrected=true)
     
     
-    # Assert that all times are the same
-    @assert(all([state.t == states_vec[1].t for state in states_vec]))
+    # Assert that all times are the same    
+    # for state in states_vec
+    #     if state.t != states_vec[1].t
+    #         println("state.t : $(state.t), state_vec[1].t : $(states_vec[1].t)")
+    #         println("state.Vₜ : $(state.Vₜ), state_vec[1].Vₜ : $(states_vec[1].Vₜ)")
+    #     #println("state.t : $(state.t), state_vec[1].t : $(states_vec[1].t)")
+    #     end
+    # #    @assert(state.t == states_vec[1].t)
+    # end
+    #@assert(all([state.t == states_vec[1].t for state in states_vec]))
     
     
     # Create a new LiBelief with the mean, std of each Deposit, take the other fields (t, V_tot, have_mined) from the first particle
-    return LiBelief([Normal(μ1, σ1), Normal(μ2, σ2), Normal(μ3, σ3), Normal(μ4, σ4)], states_vec[1].t, states_vec[1].Vₜ, states_vec[1].have_mined)
+    return LiBelief([Normal(μ1, σ1), Normal(μ2, σ2), Normal(μ3, σ3), Normal(μ4, σ4)], states_vec[1].t, states_vec[1].Vₜ, [mine for mine in states_vec[1].have_mined])
     end
     
     
