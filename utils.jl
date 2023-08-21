@@ -205,20 +205,20 @@ function can_explore_here(a::Action, b::Any)
     end
 
     if isa(b, POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}})
-        b = sample_state_belief(b)
+        b = convert_particle_collection_to_libelief(b)
     end
     
     return !b.have_mined[site_number]        
 end
 
-
-function sample_state_belief(b::POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}}, bin_beliefstate=true)
+# Now unnecessary
+# function sample_state_belief(b::POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}}, bin_beliefstate=true)
     
-    b_dist = b.sr_belief.dist
+#     b_dist = b.sr_belief.dist
 
-    out =  rand(b_dist)[1]
-    return out
-end
+#     out =  rand(b_dist)[1]
+#     return out
+# end
 
 function get_all_states(b::POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}})
     dist = b.sr_belief.dist
@@ -248,3 +248,41 @@ function compute_portion_below_threshold(P, b, idx::Int64)
     end
     return portion_below_threshold
 end
+
+# In: a particle collection Out: an LiBelief
+function convert_particle_collection_to_libelief(part_collection::POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}})
+    items_vec = part_collection.sr_belief.dist.items # this is a vector of tuples (state, V). ignore the V value for now
+    states_vec = [tup[1] for tup in items_vec] # vector of states
+    deposits_vec = [state.deposits for state in states_vec] # vector of deposit vectors
+    
+    
+    # Put all of the v1s, v2s, etc. into their own vectors so we can compute mean and std
+    v1s = [deposits[1] for deposits in deposits_vec]
+    v2s = [deposits[2] for deposits in deposits_vec]
+    v3s = [deposits[3] for deposits in deposits_vec]
+    v4s = [deposits[4] for deposits in deposits_vec]
+    
+    
+    # Compute the estimated means from all the sample points
+    μ1 = mean(v1s)
+    μ2 = mean(v2s)
+    μ3 = mean(v3s)
+    μ4 = mean(v4s)
+    
+    
+    # Compute the estimated standard deviations from all the sample points
+    σ1 = std(v1s, corrected=true)
+    σ2 = std(v2s, corrected=true)
+    σ3 = std(v3s, corrected=true)
+    σ4 = std(v4s, corrected=true)
+    
+    
+    # Assert that all times are the same
+    @assert(all([state.t == states_vec[1].t for state in states_vec]))
+    
+    
+    # Create a new LiBelief with the mean, std of each Deposit, take the other fields (t, V_tot, have_mined) from the first particle
+    return LiBelief([Normal(μ1, σ1), Normal(μ2, σ2), Normal(μ3, σ3), Normal(μ4, σ4)], states_vec[1].t, states_vec[1].Vₜ, states_vec[1].have_mined)
+    end
+    
+    

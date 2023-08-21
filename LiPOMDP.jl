@@ -152,7 +152,7 @@ function POMDPs.actions(P::LiPOMDP, b)
     # Ensures that there is <= 10% (or P.cdf_threshold) of the belief distribution below the P.min_n_units
     for i = 1:4
         if isa(b, POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}}) 
-            belief = sample_state_belief(b)
+            belief = convert_particle_collection_to_libelief(b) #! made change here too 
             if belief.have_mined[i]  # handle POMCPOW
                 continue
             end
