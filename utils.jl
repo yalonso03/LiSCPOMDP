@@ -1,6 +1,71 @@
 using Distributions
 using ParticleFilters
 
+function estimate_value(P::LiPOMDP, s, h, steps)
+    return s.Vₜ < P.Vₜ_goal ? -100.0 : 0.0
+end
+
+function evaluate_policies(pomdp::LiPOMDP, policies::Vector, k::Int, max_steps::Int; randomized=true)
+
+    up = LiBeliefUpdater(pomdp)
+    
+    for policy in policies
+        println("==========start $k simulations for ", typeof(policy), "==========")
+
+        if randomized
+            s0 = random_initial_state(pomdp)
+            b0 = random_initial_belief(s0)
+        else
+            s0 = pomdp.init_state
+            b0 = initialize_belief(up, s0)
+        end
+        sim_results = replicate_simulation(pomdp, policy, up, b0, s0; k=k, max_steps=max_steps)
+
+        # Print results
+        print_policy_results(string(typeof(policy)), sim_results)
+    end
+end
+
+function print_policy_results(policy_name, simulation_results)
+    println("\n$(policy_name) Results:")
+    println("rdisc mean: ", simulation_results[:rdisc_mean], ", stdev: ", simulation_results[:rdisc_std])
+    println("edisc mean: ", simulation_results[:edisc_mean], ", stdev: ", simulation_results[:edisc_std])
+    println("rtot mean: ", simulation_results[:rtot_mean], ", stdev: ", simulation_results[:rtot_std])
+    println("etot mean: ", simulation_results[:etot_mean], ", stdev: ", simulation_results[:etot_std])
+    println("vt mean: ", simulation_results[:vt_mean], ", stdev: ", simulation_results[:vt_std])
+end
+
+function replicate_simulation(pomdp, policy, up, b0, s0; k=100, max_steps=10, rng=MersenneTwister(1))
+    rdisc_values = Float64[]
+    edisc_values = Float64[]
+    rtot_values = Float64[]
+    etot_values = Float64[]
+    vt_values = Float64[]
+
+    for _ in 1:k
+        #println("====new rep====")
+        result = simulate_policy(pomdp, policy, up, b0, s0, max_steps=max_steps, rng=rng)
+        push!(rdisc_values, result.rdisc)
+        push!(edisc_values, result.edisc)
+        push!(rtot_values, result.rtot)
+        push!(etot_values, result.etot)
+        push!(vt_values, result.vt)
+    end
+
+    return Dict(
+        :rdisc_mean => mean(rdisc_values),
+        :rdisc_std => std(rdisc_values),
+        :edisc_mean => mean(edisc_values),
+        :edisc_std => std(edisc_values),
+        :rtot_mean => mean(rtot_values),
+        :rtot_std => std(rtot_values),
+        :etot_mean => mean(etot_values),
+        :etot_std => std(etot_values),
+        :vt_mean => mean(vt_values),
+        :vt_std => std(vt_values),
+    )
+end
+
 
 function simulate_policy(pomdp, policy, up, b0, s0; max_steps=10, rng=MersenneTwister(1))
     r_total = 0.
@@ -12,11 +77,12 @@ function simulate_policy(pomdp, policy, up, b0, s0; max_steps=10, rng=MersenneTw
     b = deepcopy(b0)
     s = deepcopy(s0)
     while (!isterminal(pomdp, s) && t < max_steps)
-        t += 1
+        t += 1        
         a = action(policy, b)
         (s, o, r) = gen(pomdp, s, a, rng)
         b = update(up, b, a, o)
         e = get_action_emission(pomdp, a)
+        #println("action: $a, type: $(typeof(a)), emission: $e")
         r_total += r
         r_disc += r*d        
         e_total += e
@@ -43,7 +109,8 @@ function simulate_mcts(pomdp, policy, s0; max_steps=10, rng=MersenneTwister(1))
         r_total += r
         r_disc += r*d        
         e_total += e
-        e_disc += e*d
+        e_disc += e*d        
+
         d *= discount(pomdp)
         #@show(t=t, s=s, a=a, r=r, o=o)
     end
