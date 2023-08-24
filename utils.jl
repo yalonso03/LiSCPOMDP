@@ -26,16 +26,22 @@ function print_policy_results(policy_name, simulation_results)
     println("rtot mean: ", simulation_results[:rtot_mean], ", stdev: ", simulation_results[:rtot_std])
     println("etot mean: ", simulation_results[:etot_mean], ", stdev: ", simulation_results[:etot_std])
     println("vt mean: ", simulation_results[:vt_mean], ", stdev: ", simulation_results[:vt_std])
+    println("vol_tot mean:", simulation_results[:vol_tot_mean], ", stdev: ", simulation_results[:vol_tot_std])
 end
 
-function replicate_simulation(pomdp, policy, up; k=100, max_steps=10, rng=MersenneTwister(1), randomized=false)
+function replicate_simulation(pomdp, policy, up; k=100, max_steps=10, rng=MersenneTwister(1), randomized=true)
     rdisc_values = Float64[]
     edisc_values = Float64[]
     rtot_values = Float64[]
     etot_values = Float64[]
     vt_values = Float64[]
+    vol_tot_values = Float64[]
 
-    for _ in 1:k
+    for i in 1:k
+        if policy isa MCTSPlanner
+            println(" replication: $i")
+        end
+       
         if randomized
             s0 = random_initial_state(pomdp)
             b0 = random_initial_belief(s0)
@@ -51,6 +57,7 @@ function replicate_simulation(pomdp, policy, up; k=100, max_steps=10, rng=Mersen
         push!(rtot_values, result.rtot)
         push!(etot_values, result.etot)
         push!(vt_values, result.vt)
+        push!(vol_tot_values, result.vol_total)
     end
 
     return Dict(
@@ -64,6 +71,8 @@ function replicate_simulation(pomdp, policy, up; k=100, max_steps=10, rng=Mersen
         :etot_std => std(etot_values),
         :vt_mean => mean(vt_values),
         :vt_std => std(vt_values),
+        :vol_tot_mean => mean(vol_tot_values),
+        :vol_tot_std => std(vol_tot_values)
     )
 end
 
@@ -73,8 +82,10 @@ function simulate_policy(pomdp, policy, up, b0, s0; max_steps=10, rng=MersenneTw
     r_disc = 0.
     e_total = 0.
     e_disc = 0.
+    vol_total = 0.
     t = 0
     d = 1.
+
     b = deepcopy(b0)
     s = deepcopy(s0)
     while (!isterminal(pomdp, s) && t < max_steps)
@@ -88,35 +99,38 @@ function simulate_policy(pomdp, policy, up, b0, s0; max_steps=10, rng=MersenneTw
         r_disc += r*d        
         e_total += e
         e_disc += e*d
+        if get_action_type(a) == "MINE"
+            vol_total += 1
+        end
         d *= discount(pomdp)
         #@show(t=t, s=s, a=a, r=r, o=o)
     end
-    return (rdisc=r_disc, edisc=e_disc, rtot=r_total, etot=e_total, vt=s.Vₜ)
+    return (rdisc=r_disc, edisc=e_disc, rtot=r_total, etot=e_total, vt=s.Vₜ, vol_total=vol_total)
 end
 
-function simulate_mcts(pomdp, policy, s0; max_steps=10, rng=MersenneTwister(1))
-    r_total = 0.
-    r_disc = 0.
-    e_total = 0.
-    e_disc = 0.
-    t = 0
-    d = 1.
-    s = deepcopy(s0)
-    while (!isterminal(pomdp, s) && t < max_steps)
-        t += 1
-        a = action(policy, s)
-        (s, o, r) = gen(pomdp, s, a, rng)
-        e = get_action_emission(pomdp, a)
-        r_total += r
-        r_disc += r*d        
-        e_total += e
-        e_disc += e*d        
+# function simulate_mcts(pomdp, policy, s0; max_steps=10, rng=MersenneTwister(1))
+#     r_total = 0.
+#     r_disc = 0.
+#     e_total = 0.
+#     e_disc = 0.
+#     t = 0
+#     d = 1.
+#     s = deepcopy(s0)
+#     while (!isterminal(pomdp, s) && t < max_steps)
+#         t += 1
+#         a = action(policy, s)
+#         (s, o, r) = gen(pomdp, s, a, rng)
+#         e = get_action_emission(pomdp, a)
+#         r_total += r
+#         r_disc += r*d        
+#         e_total += e
+#         e_disc += e*d        
 
-        d *= discount(pomdp)
-        #@show(t=t, s=s, a=a, r=r, o=o)
-    end
-    return (rdisc=r_disc, edisc=e_disc, rtot=r_total, etot=e_total, vt=s.Vₜ)
-end
+#         d *= discount(pomdp)
+#         #@show(t=t, s=s, a=a, r=r, o=o)
+#     end
+#     return (rdisc=r_disc, edisc=e_disc, rtot=r_total, etot=e_total, vt=s.Vₜ)
+# end
 
 
 function compute_chunk_boundaries(quantile_vols::Vector{Float64})

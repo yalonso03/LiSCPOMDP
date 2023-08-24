@@ -9,6 +9,10 @@ function POMDPs.action(p::RandomPolicy, b::LiBelief)
     return rand(potential_actions)
 end
 
+function POMDPs.updater(policy::RandomPolicy)
+    return LiBeliefUpdater(policy.pomdp)
+end
+
 #GREEDY EFFICIENCY POLICY 
 @with_kw mutable struct EfficiencyPolicy <: Policy 
     pomdp::LiPOMDP

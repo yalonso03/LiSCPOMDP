@@ -82,6 +82,7 @@ struct LiBelief{T<:UnivariateDistribution}
     have_mined::Vector{Bool} 
 end
 
+POMDPs.support(b::LiBelief) = rand(b)
 
 # Input a belief and randomly produce a state from it 
 function Base.rand(rng::AbstractRNG, b::LiBelief)
@@ -303,16 +304,17 @@ function kalman_step(P::LiPOMDP, μ::Float64, σ::Float64, z::Float64)
     μ_prime = μ + k * (z - μ)  # Estimate new mean
     σ_prime = (1 - k) * σ   # Estimate new uncertainty
     return μ_prime, σ_prime
-    end
+end
 
 struct LiBeliefUpdater <: Updater
     P::LiPOMDP
 end
 
-function POMDPs.initialize_belief(up::Updater, s::State)
+function POMDPs.initialize_belief(up::Updater, s)
     # Initialize belief to be a vector of 4 normal distributions, one for each deposit
     # Each normal distribution has mean equal to the amount of Li in that deposit, and
     # standard deviation equal to P.σ_obs
+    s = rand(s)
     deposit_dists = [Normal(s.deposits[1], 0.2), Normal(s.deposits[2], 0.2), Normal(s.deposits[3], 0.2), Normal(s.deposits[4], 2.0)]
     t = s.t
     V_tot = s.Vₜ
