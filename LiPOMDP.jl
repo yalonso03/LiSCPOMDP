@@ -5,8 +5,7 @@ Yasmine Alonso, Mansur Arief, Anthony Corso, Jef Caers, and Mykel Kochenderfer
 
 File: LiPOMDP.jl
 ----------------
-This file contains the continuous version of the observation function. We use the DiscreteLiPOMDP.jl file
-for planning, and this file for running simulations.
+This file contains the implementation of the LiPOMDP. 
 =#
 
 # All of the imports
@@ -24,7 +23,6 @@ using LinearAlgebra
 using Statistics
 using QMDP
 using D3Trees
-#using ConjugatePriors: posterior
 
 
 @with_kw mutable struct State
@@ -204,7 +202,7 @@ function POMDPs.reward(P::LiPOMDP, s::State, a::Action)
     return reward
 end
 
-# Gen function
+# Gen function: basically the trnasition function, but also samples an observation and reward, returning as a tuple
 function POMDPs.gen(P::LiPOMDP, s::State, a::Action, rng::AbstractRNG)
     next_state::State = deepcopy(s) # Make a copy!!! need to be wary of this in Julia deepcopy might be slow
     next_state.t = s.t + 1  # Increase time by 1 in all cases
@@ -213,9 +211,6 @@ function POMDPs.gen(P::LiPOMDP, s::State, a::Action, rng::AbstractRNG)
         next_state = deepcopy(P.null_state)
 
     else
-
-        
-
         action_type = get_action_type(a)
         site_number = get_site_number(a)
 

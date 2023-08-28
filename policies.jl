@@ -1,4 +1,14 @@
-#RANDOM POLICY
+#=
+Modeling the US Path to Lithium Self Sufficiency Using POMDPs
+Summer 2023
+Yasmine Alonso, Mansur Arief, Anthony Corso, Jef Caers, and Mykel Kochenderfer
+
+File: policies.jl
+----------------
+This file contains the multiple baseline policies to test our POMCPOW and MCTS-DPW planners against. 
+=#
+
+#RANDOM POLICY -- selects a random action to take (from the available ones)
 struct RandomPolicy <: Policy
     pomdp::LiPOMDP
 end
@@ -13,7 +23,8 @@ function POMDPs.updater(policy::RandomPolicy)
     return LiBeliefUpdater(policy.pomdp)
 end
 
-#GREEDY EFFICIENCY POLICY 
+
+#GREEDY EFFICIENCY POLICY -- explore all deposits first, then 
 @with_kw mutable struct EfficiencyPolicy <: Policy 
     pomdp::LiPOMDP
     need_explore::Vector{Bool}
@@ -21,9 +32,7 @@ end
 
 function POMDPs.action(p::EfficiencyPolicy, b::LiBelief)
 
-    #println("efficiency actions list: $(actions(p.pomdp, b)) for $b")
-
-    # Explore all that needs exploring first
+    # Explore all that needs exploring first, then mine site with highest amount of Li
     for (index, to_explore) in enumerate(p.need_explore)
         if to_explore
             p.need_explore[index] = false
@@ -47,7 +56,7 @@ function POMDPs.action(p::EfficiencyPolicy, b::LiBelief)
 end
 
 
-#GREEDY EFFICIENCY POLICY CONSIDERING UNCERTAINTY
+#GREEDY EFFICIENCY POLICY CONSIDERING UNCERTAINTY -- same idea as EfficiencyPolicy, but also considers uncertainty
 @with_kw mutable struct EfficiencyPolicyWithUncertainty <: Policy 
     pomdp::LiPOMDP
     lambda::Float64  # Penalty factor for uncertainty
@@ -82,16 +91,13 @@ function POMDPs.action(p::EfficiencyPolicyWithUncertainty, b::LiBelief)
 end
 
 
-#EMISSION AWARE POLICY
+#EMISSION AWARE POLICY -- explores first, then mines the deposit with the highest expected Lithium per CO2 emission
 @with_kw mutable struct EmissionAwarePolicy <: Policy 
     pomdp::LiPOMDP
     need_explore::Vector{Bool}
 end
 
 function POMDPs.action(p::EmissionAwarePolicy, b::LiBelief)
-
-    #println("EmissionAwarePolicy actions list: $(actions(p.pomdp, b)) for $b")
-
     # Explore all that needs exploring first
     for (index, to_explore) in enumerate(p.need_explore)
         if to_explore

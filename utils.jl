@@ -1,10 +1,22 @@
+#=
+Modeling the US Path to Lithium Self Sufficiency Using POMDPs
+Summer 2023
+Yasmine Alonso, Mansur Arief, Anthony Corso, Jef Caers, and Mykel Kochenderfer
+
+File: utils.jl
+----------------
+This file contains multiple utility functions used throughout the project.
+=#
+
 using Distributions
 using ParticleFilters
 
+# Used for the POMCPOW solver. Simply sees if we have reached volume goal or not.
 function estimate_value(P::LiPOMDP, s, h, steps)
     return s.Vₜ < P.Vₜ_goal ? -100.0 : 0.0
 end
 
+# Runs all simulations for every inputted policy
 function evaluate_policies(pomdp::LiPOMDP, policies::Vector, k::Int, max_steps::Int)
 
     up = LiBeliefUpdater(pomdp)
@@ -19,6 +31,7 @@ function evaluate_policies(pomdp::LiPOMDP, policies::Vector, k::Int, max_steps::
     end
 end
 
+# Displays results from simulation
 function print_policy_results(policy_name, simulation_results)
     println("\n$(policy_name) Results:")
     println("rdisc mean: ", simulation_results[:rdisc_mean], ", stdev: ", simulation_results[:rdisc_std])
@@ -28,6 +41,7 @@ function print_policy_results(policy_name, simulation_results)
     println("vt mean: ", simulation_results[:vt_mean], ", stdev: ", simulation_results[:vt_std])
     println("vol_tot mean:", simulation_results[:vol_tot_mean], ", stdev: ", simulation_results[:vol_tot_std])
 end
+
 
 function replicate_simulation(pomdp, policy, up; k=100, max_steps=10, rng=MersenneTwister(1), randomized=true)
     rdisc_values = Float64[]
@@ -108,31 +122,7 @@ function simulate_policy(pomdp, policy, up, b0, s0; max_steps=10, rng=MersenneTw
     return (rdisc=r_disc, edisc=e_disc, rtot=r_total, etot=e_total, vt=s.Vₜ, vol_total=vol_total)
 end
 
-# function simulate_mcts(pomdp, policy, s0; max_steps=10, rng=MersenneTwister(1))
-#     r_total = 0.
-#     r_disc = 0.
-#     e_total = 0.
-#     e_disc = 0.
-#     t = 0
-#     d = 1.
-#     s = deepcopy(s0)
-#     while (!isterminal(pomdp, s) && t < max_steps)
-#         t += 1
-#         a = action(policy, s)
-#         (s, o, r) = gen(pomdp, s, a, rng)
-#         e = get_action_emission(pomdp, a)
-#         r_total += r
-#         r_disc += r*d        
-#         e_total += e
-#         e_disc += e*d        
-
-#         d *= discount(pomdp)
-#         #@show(t=t, s=s, a=a, r=r, o=o)
-#     end
-#     return (rdisc=r_disc, edisc=e_disc, rtot=r_total, etot=e_total, vt=s.Vₜ)
-# end
-
-
+# Used to discretize observations -- not needed in current version
 function compute_chunk_boundaries(quantile_vols::Vector{Float64})
     n = length(quantile_vols)
     @assert n > 0 "quantile_vols must not be empty"
@@ -144,6 +134,7 @@ function compute_chunk_boundaries(quantile_vols::Vector{Float64})
     return chunk_boundaries
 end
 
+# Used to discretize observations -- not needed in current version
 function compute_chunk_probs(chunk_boundaries::Vector{Float64}, site_dist::Normal)
     n = length(chunk_boundaries)
     @assert n > 0 "chunk_boundaries must not be empty"
@@ -159,6 +150,7 @@ function compute_chunk_probs(chunk_boundaries::Vector{Float64}, site_dist::Norma
     return chunk_probs
 end
 
+# Inputs an action and the pomdp, and outputs how much carbon will be emitted if that action is taken
 function get_action_emission(P, a)
     action_type = get_action_type(a)
     action_number = get_site_number(a)
@@ -168,6 +160,7 @@ function get_action_emission(P, a)
     return r3
 end
 
+# Inputs an action, outputs the site number of that action
 function get_site_number(a::Action)
     action_str = string(a)
     len = length(action_str)
@@ -175,7 +168,7 @@ function get_site_number(a::Action)
     return deposit_number
 end
 
-# I'm sure there's some builtin for this but I couldn't find it lol
+# I'm sure there's some builtin for this but I couldn't find it lol. Splices a string
 function splice(begin_index, end_index, str)
     result = ""
     for i = begin_index:end_index
@@ -184,6 +177,7 @@ function splice(begin_index, end_index, str)
     return result
 end
 
+# Inputs an action, outputs either MINE or EXPLORE as a string
 function get_action_type(a::Action)
     action_str = string(a)
     len = length(action_str)
@@ -191,6 +185,7 @@ function get_action_type(a::Action)
     return action_type
 end
 
+# Hardcoded function to convert a string to an action
 function str_to_action(s::String)
     if s == "MINE1"
         return MINE1
@@ -211,6 +206,7 @@ function str_to_action(s::String)
     end
 end
 
+# Inputs an action and belief, outputs whether or not we can explore at that site
 function can_explore_here(a::Action, b::Any)
     action_type = get_action_type(a)
     site_number = get_site_number(a)
@@ -226,14 +222,6 @@ function can_explore_here(a::Action, b::Any)
     return !b.have_mined[site_number]        
 end
 
-# Now unnecessary
-# function sample_state_belief(b::POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}}, bin_beliefstate=true)
-    
-#     b_dist = b.sr_belief.dist
-
-#     out =  rand(b_dist)[1]
-#     return out
-# end
 
 function get_all_states(b::POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}})
     dist = b.sr_belief.dist
@@ -246,7 +234,7 @@ function get_all_states(s::State)
     return [s.deposits]
 end
 
-
+# Used to see how much probability mass is below our min_n_units threshold (used to see if we can MINE at a desired site)
 function compute_portion_below_threshold(P, b, idx::Int64)
     if isa(b, LiBelief)
         dist = b.deposit_dists[idx]
@@ -257,14 +245,13 @@ function compute_portion_below_threshold(P, b, idx::Int64)
         sampled_belief = get_all_states(b)
         n_rows = length(sampled_belief)
 
-        #! 
         num_below_threshold = sum(row[idx] < P.min_n_units for row in sampled_belief)
         portion_below_threshold = num_below_threshold / n_rows
     end
     return portion_below_threshold
 end
 
-# In: a particle collection Out: an LiBelief
+# In: a particle collection Out: an LiBelief representation of that collection
 function convert_particle_collection_to_libelief(part_collection::POMCPOW.StateBelief{POWNodeBelief{State, Action, Any, LiPOMDP}})
     items_vec = part_collection.sr_belief.dist.items # this is a vector of tuples (state, V). ignore the V value for now
     states_vec = [tup[1] for tup in items_vec] # vector of states
@@ -306,6 +293,6 @@ function convert_particle_collection_to_libelief(part_collection::POMCPOW.StateB
     
     # Create a new LiBelief with the mean, std of each Deposit, take the other fields (t, V_tot, have_mined) from the first particle
     return LiBelief([Normal(μ1, σ1), Normal(μ2, σ2), Normal(μ3, σ3), Normal(μ4, σ4)], states_vec[1].t, states_vec[1].Vₜ, [mine for mine in states_vec[1].have_mined])
-    end
+end
     
     

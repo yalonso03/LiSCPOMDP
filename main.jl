@@ -1,3 +1,13 @@
+#=
+Modeling the US Path to Lithium Self Sufficiency Using POMDPs
+Summer 2023
+Yasmine Alonso, Mansur Arief, Anthony Corso, Jef Caers, and Mykel Kochenderfer
+
+File: main.jl
+----------------
+This file contains the code that runs and evaluates all of our policies, printing out necessary information to the console.
+=#
+
 using POMDPs
 using POMCPOW
 using POMDPModels
@@ -12,27 +22,25 @@ include("utils.jl")
 include("policies.jl")
 
 
-
-# POMCPOW Solver
+# Initializing the POMDP, Belief Updater, and initial state, as well as the MDP version of the POMDP for MCTS
 pomdp = LiPOMDP() #always use continous and use POMCPOW obs widening params to control the discretization
 up = LiBeliefUpdater(pomdp)
 s0 = pomdp.init_state
 #b0 = initialize_belief(up, s0)
-
 mdp = GenerativeBeliefMDP(pomdp, up)
 
-# benchmarks
+# benchmark planners (from policies.jl)
 random_planner = RandomPolicy(pomdp)
 strong_planner = EfficiencyPolicy(pomdp, [true, true, true, true])
 robust_planner = EfficiencyPolicyWithUncertainty(pomdp, 1., [true, true, true, true])
 eco_planner = EmissionAwarePolicy(pomdp, [true, true, true, true])
 
 
-#MCTS Solver
+#MCTS Solver -- uses mdp version of pomdp
 mcts_solver = DPWSolver(
     depth=8,
     n_iterations = 100,
-    estimate_value=RolloutEstimator(robust_planner, max_depth=11),
+    estimate_value=RolloutEstimator(robust_planner, max_depth=100),
     enable_action_pw=false,
     enable_state_pw=true,
     k_state = 4.,
@@ -40,7 +48,8 @@ mcts_solver = DPWSolver(
 )
 mcts_planner = solve(mcts_solver, mdp)
 
-# POMCP Solver
+
+# POMCPOW Solver
 println("POMCPOW Solver")
 solver = POMCPOWSolver(
     tree_queries=1000, 
@@ -52,14 +61,7 @@ solver = POMCPOWSolver(
     init_N=10  
 ) # Estimate value should fix the previous problem with action functions
 pomcpow_planner = solve(solver, pomdp)
-# ap, info = action_info(pomcpow_planner, b0, tree_in_info=true)
-# tree = D3Tree(info[:tree], init_expand=1)
-# inchrome(tree)
 
-# compare mcts and pomcpow
-# simulate(RolloutSimulator(max_steps=11), mdp, mcts_planner, b0)
-# simulate(RolloutSimulator(max_steps=11), pomdp, pomcpow_planner, up, b0)
-# simulate(RolloutSimulator(max_steps=11), pomdp, eco_planner, up, b0)
 
 
 planners = [random_planner, strong_planner, robust_planner, eco_planner, pomcpow_planner, mcts_planner] #
@@ -67,8 +69,6 @@ planners = [random_planner, strong_planner, robust_planner, eco_planner, pomcpow
 n_reps=20
 max_steps=15
 
+# Compares all the policies and prints out relevant information
 evaluate_policies(pomdp, planners, n_reps, max_steps)
 
-#save planner
-# println("pomcpow policy saved as planners/pomcpow_planner.jld2")
-# serialize("planners/pomcpow_planner.jld2", pomcpow_planner)
