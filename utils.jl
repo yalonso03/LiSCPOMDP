@@ -31,15 +31,30 @@ function evaluate_policies(pomdp::LiPOMDP, policies::Vector, k::Int, max_steps::
     end
 end
 
+# Version for when each policy needs a separate pomdp, evaluates a single policy instead of mulitple 
+function evaluate_policy(pomdp::LiPOMDP, policy, k::Int, max_steps::Int)
+
+    up = LiBeliefUpdater(pomdp)
+    
+    #for policy in policies
+    println("==========start $k simulations for ", typeof(policy), "==========")
+
+    sim_results = replicate_simulation(pomdp, policy, up, k=k, max_steps=max_steps)
+
+        # Print results
+    print_policy_results(string(typeof(policy)), sim_results)
+    #end
+end
+
 # Displays results from simulation
 function print_policy_results(policy_name, simulation_results)
     println("\n$(policy_name) Results:")
     println("rdisc mean: ", simulation_results[:rdisc_mean], ", stdev: ", simulation_results[:rdisc_std])
     println("edisc mean: ", simulation_results[:edisc_mean], ", stdev: ", simulation_results[:edisc_std])
     println("rtot mean: ", simulation_results[:rtot_mean], ", stdev: ", simulation_results[:rtot_std])
-    println("etot mean: ", simulation_results[:etot_mean], ", stdev: ", simulation_results[:etot_std])
+    println("**etot mean: ", simulation_results[:etot_mean], ", stdev: ", simulation_results[:etot_std])
     println("vt mean: ", simulation_results[:vt_mean], ", stdev: ", simulation_results[:vt_std])
-    println("vol_tot mean:", simulation_results[:vol_tot_mean], ", stdev: ", simulation_results[:vol_tot_std])
+    println("**vol_tot mean:", simulation_results[:vol_tot_mean], ", stdev: ", simulation_results[:vol_tot_std])
 end
 
 

@@ -7,7 +7,7 @@ File: main.jl
 ----------------
 This file contains the code that runs and evaluates all of our policies, printing out necessary information to the console.
 =#
-
+using Random
 using POMDPs
 using POMCPOW
 using POMDPModels
@@ -62,13 +62,12 @@ solver = POMCPOWSolver(
 ) # Estimate value should fix the previous problem with action functions
 pomcpow_planner = solve(solver, pomdp)
 
-
-
 planners = [random_planner, strong_planner, robust_planner, eco_planner, pomcpow_planner, mcts_planner] #
 
 n_reps=20
 max_steps=15
 
 # Compares all the policies and prints out relevant information
+# Read in utils.jl
 evaluate_policies(pomdp, planners, n_reps, max_steps)
 

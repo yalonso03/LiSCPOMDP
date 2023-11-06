@@ -56,7 +56,7 @@ end
 @enum Action MINE1 MINE2 MINE3 MINE4 EXPLORE1 EXPLORE2 EXPLORE3 EXPLORE4
 rng = MersenneTwister(1)
 
-@with_kw struct LiPOMDP <: POMDP{State, Action, Any} 
+@with_kw mutable struct LiPOMDP <: POMDP{State, Action, Any} 
     t_goal = 10
     σ_obs = 0.1
     Vₜ_goal = 8
