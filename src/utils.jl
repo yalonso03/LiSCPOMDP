@@ -8,11 +8,14 @@ File: utils.jl
 This file contains multiple utility functions used throughout the project.
 =#
 
-using Distributions
-using ParticleFilters
-
 # Used for the POMCPOW solver. Simply sees if we have reached volume goal or not.
 function estimate_value(P::LiPOMDP, s, h, steps)
+    return s.Vₜ < P.Vₜ_goal ? -100.0 : 0.0
+end
+
+#Used for the POMCPOW solver. Same method, defined for specific types to mitigate errors.
+function POMCPOW.estimate_value(
+    P::LiPOMDP, s::State, h::POWTreeObsNode{POWNodeBelief{State, Action, Any, LiPOMDP}, Action, Any, ParticleFilters.ParticleCollection{State}}, steps::Int64)
     return s.Vₜ < P.Vₜ_goal ? -100.0 : 0.0
 end
 
@@ -177,10 +180,13 @@ end
 
 # Inputs an action, outputs the site number of that action
 function get_site_number(a::Action)
-    action_str = string(a)
-    len = length(action_str)
-    deposit_number = Int(action_str[len]) - 48  # -48 because Int() gives me the ascii code
-    return deposit_number
+    a = a.a
+    len = length(a)
+    if (a[1:4] == "MINE")
+        return parse(Int64, a[5:len])
+    else
+        return parse(Int64, a[8:len])
+    end
 end
 
 # I'm sure there's some builtin for this but I couldn't find it lol. Splices a string
@@ -194,30 +200,12 @@ end
 
 # Inputs an action, outputs either MINE or EXPLORE as a string
 function get_action_type(a::Action)
-    action_str = string(a)
-    len = length(action_str)
-    action_type = splice(1, len - 1, action_str)
-    return action_type
-end
-
-# Hardcoded function to convert a string to an action
-function str_to_action(s::String)
-    if s == "MINE1"
-        return MINE1
-    elseif s == "MINE2"
-        return MINE2
-    elseif s == "MINE3"
-        return MINE3
-    elseif s == "MINE4"
-        return MINE4
-    elseif s == "EXPLORE1"
-        return EXPLORE1
-    elseif s == "EXPLORE2"
-        return EXPLORE2
-    elseif s == "EXPLORE3"
-        return EXPLORE3
+    a = a.a
+    len = length(a)
+    if (a[1:4] == "MINE")
+        return "MINE"
     else
-        return EXPLORE4
+        return "EXPLORE"
     end
 end
 
@@ -307,7 +295,169 @@ function convert_particle_collection_to_libelief(part_collection::POMCPOW.StateB
     
     
     # Create a new LiBelief with the mean, std of each Deposit, take the other fields (t, V_tot, have_mined) from the first particle
-    return LiBelief([Normal(μ1, σ1), Normal(μ2, σ2), Normal(μ3, σ3), Normal(μ4, σ4)], states_vec[1].t, states_vec[1].Vₜ, [mine for mine in states_vec[1].have_mined])
+    return LiBelief([Normal(μ1, σ1), Normal(μ2, σ2), Normal(μ3, σ3), Normal(μ4, σ4)], states_vec[1].t, states_vec[1].Vₜ, states_vec[1].Iₜ, [mine for mine in states_vec[1].have_mined])
 end
+
+#Base functions ########################
+
+# To make the struct iterable (potentially for value iteration?) Was experiencing errors
+function Base.iterate(state::State, index=1)
+    if index <= 5  # I should get rid of magic numbers later
+        
+        # If on a valid field index, get the field name and then the thing at that field
+        field = fieldnames(State)[index]
+        value = getfield(state, field)
+        # Return value and the next index for iteration
+        return (value, index + 1)
+    else
+        # If we've gone through all fields, return nothing to signify that we're done
+        return nothing
+    end
+end
+
+# Make a copy of the state
+function Base.deepcopy(s::State)
+    return State(deepcopy(s.deposits), s.t, s.Vₜ, s.Iₜ, deepcopy(s.have_mined))  # don't have to copy t and Vₜ cuz theyre immutable i think
+end
+
+# Input a belief and randomly produce a state from it 
+function Base.rand(rng::AbstractRNG, b::LiBelief)
+    deposit_samples = rand.(rng, b.deposit_dists)
+    t = b.t
+    V_tot = b.V_tot
+    I_tot = b.I_tot
+    have_mined = b.have_mined
+    return State(deposit_samples, t, V_tot, I_tot, have_mined)
+end
+
+# Define == operator to use in the termination thing, just compares two states
+Base.:(==)(s1::State, s2::State) = (s1.deposits == s2.deposits) && (s1.t == s2.t) && (s1.Vₜ == s2.Vₜ) && (s1.Iₜ == s2.Iₜ) &&  (s1.have_mined == s2.have_mined)
+
+##Helper Functions Moved from LiPOMDP.jl
+function random_initial_state(P::LiPOMDP, rng::AbstractRNG=Random.default_rng())
+    # Randomize resources in each deposit site (assuming resources range between 0 to 10 for example)
+    resources = [rand(rng, 2.:1.:6.) for _ in 1:P.n_deposits]
+    t = 0
+    v = 0
+    i = 0
+    mined = fill(false, P.n_deposits)
+
+    return State(resources, t, v, i, mined)
+end
+
+function random_initial_belief(s::State, rng::AbstractRNG=Random.default_rng())
+    # Initialize belief to be a vector of 4 normal distributions, one for each deposit
+    # Each normal distribution has mean equal to the amount of Li in that deposit, and
+    # standard deviation equal to P.σ_obs
+    std_range = collect(1.:0.5:5.0)
+    deposit_dists = [Normal(d, rand(rng, std_range)) for d in s.deposits]
+    t = s.t
+    V_tot = s.Vₜ
+    I_tot = s.Iₜ
+    have_mined = s.have_mined
+    return LiBelief(deposit_dists, t, V_tot, I_tot, have_mined)
+end
+
+# kalman_step is used in the belief updater update function
+function kalman_step(P::LiPOMDP, μ::Float64, σ::Float64, z::Float64)
+    k = σ / (σ + P.σ_obs)  # Kalman gain
+    μ_prime = μ + k * (z - μ)  # Estimate new mean
+    σ_prime = (1 - k) * σ   # Estimate new uncertainty
+    return μ_prime, σ_prime
+end
+
+
+function get_rewards(pomdp, hist)
+
+    explore_actions = []
+    explore_times = []
+    invest_actions = []
+    invest_times = []
+    mine_actions = []
+    mine_times = []
+    decommision_actions = []
+    decommision_times = []
+
+    r1 = []
+    r2_domestic = []
+    r2_imported = []
+    r3 = []
+    r4 = []
+    r5 = []
     
-    
+    for (_, step) in enumerate(hist)
+        a = step.a
+        s = step.s
+        a_type = get_action_type(a)
+        dnum = get_site_number(a)
+
+        if a_type == "EXPLORE"
+            if !s.have_mined[dnum]
+                push!(explore_actions, dnum)
+                push!(explore_times, step.t)
+            end            
+        else
+            if !s.have_mined[dnum]
+                push!(invest_actions, dnum)
+                push!(invest_times, step.t)
+            end
+        end
+
+        for i in 1:4
+            if s.have_mined[i] 
+                if  s.deposits[i] > 0
+                    push!(mine_actions, i)
+                    push!(mine_times, step.t)
+                else
+                    push!(decommision_actions, i)
+                    push!(decommision_times, step.t)
+                end
+            end
+        end
+
+        r2_ = compute_r2(pomdp, s, a)
+        push!(r1, compute_r1(pomdp, s, a))        
+        push!(r2_domestic, r2_.domestic)
+        push!(r2_imported, r2_.imported)
+        push!(r3, compute_r3(pomdp, s, a))
+        push!(r4, compute_r4(pomdp, s, a))
+        push!(r5, compute_r5(pomdp, s, a)*0.25)
+    end
+
+    return (
+        a_explore=explore_actions, t_explore=explore_times, 
+        a_mine=mine_actions, t_mine=mine_times, 
+        a_invest=invest_actions, t_invest=invest_times,
+        a_decommision=decommision_actions, t_decommision=decommision_times,
+        r1=r1, r2=(domestic=r2_domestic, imported=r2_imported), 
+        r3=r3, r4=r4, r5=r5)
+end
+
+function plot_results(pomdp::LiPOMDP, df::NamedTuple;ylims=(-200, 200))
+    T = pomdp.time_horizon
+    #plot 1: actions vs time
+    p0 = scatter(df.t_explore, df.a_explore, label="EXPLORE", markersize=10, xticks=1:T);
+    scatter!(df.t_invest, df.a_invest, label="INVEST", markersize=10);
+    scatter!(df.t_decommision, df.a_decommision, label="DECOMMISSION/REHAB", markersize=10);
+    scatter!(
+        df.t_mine, df.a_mine, 
+        label="MINE", markersize=10, 
+        xticks=0:1:T, 
+        yticks=(1:4, ["1 (SilverPeak, USA)", "2 (ThackerPass, USA)", "3 (Greenbushes, AUS)", "4 (Pilgangoora, AUS)"]),
+        ylims=(0.5, 4.5), 
+        ylabel="Deposit Site", xlabel="Time", 
+        title="Actions vs Time", 
+        legend=:outerbottomright);
+    vline!([pomdp.t_goal], label="Time Delay Goal", color=:red, linestyle=:dash);        
+
+    #set xticks to be integers
+    p1 = bar(df.r1, label="r1", xlabel="Time", ylabel="\$ Value (in Millions)", title="Domestic Mining (Penalty)", legend=false, xticks=0:5:T, ylims=ylims);
+    p5 = bar(df.r5, label="r5", xlabel="Time", ylabel="\$ Value (in Millions)", title="Cash Flow", legend=false, ylims=ylims, xticks=0:5:T);
+    p4 = bar(df.r4, label="r4", xlabel="Time", ylabel="\$ Value (in Millions)", title="Unmet Demand (Penalty)", legend=false, ylims=ylims=ylims, xticks=0:5:T);
+    p2 = bar(df.r2.domestic+df.r2.imported, label="r2", xlabel="Time", ylabel="Thousand Metric Tons", title="LCE Volume Mined", legend=false, xticks=0:5:T);
+    p3 = bar(df.r3, label="r3", xlabel="Time", ylabel="Units", title="CO2 Emission", legend=false, ylims=(-30, 0), xticks=0:5:T);
+
+    prow1 = plot(p5, p1, p4, layout=(1, 3), margin=3mm);  
+    prow2 = plot(p2, p3, layout=(1, 2));  
+    return (action=p0, econ=prow1, other=prow2)
+end

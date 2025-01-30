@@ -9,20 +9,23 @@ This file contains the multiple baseline policies to test our POMCPOW and MCTS-D
 =#
 
 #RANDOM POLICY -- selects a random action to take (from the available ones)
-struct RandomPolicy <: Policy
+struct RandPolicy <: Policy
     pomdp::LiPOMDP
 end
 
-function POMDPs.action(p::RandomPolicy, b::LiBelief)
+function POMDPs.action(p::RandPolicy, b::LiBelief)
     potential_actions = actions(p.pomdp, b)
-    #println("random actions list: $potential_actions for $b")
     return rand(potential_actions)
 end
 
-function POMDPs.updater(policy::RandomPolicy)
-    return LiBeliefUpdater(policy.pomdp)
+function POMDPs.action(p::RandPolicy, x::Deterministic{State})
+    potential_actions = actions(p.pomdp, x)
+    return rand(potential_actions)
 end
 
+function POMDPs.updater(policy::RandPolicy)
+    return LiBeliefUpdater(policy.pomdp)
+end
 
 #GREEDY EFFICIENCY POLICY -- explore all deposits first, then 
 @with_kw mutable struct EfficiencyPolicy <: Policy 
@@ -36,14 +39,14 @@ function POMDPs.action(p::EfficiencyPolicy, b::LiBelief)
     for (index, to_explore) in enumerate(p.need_explore)
         if to_explore
             p.need_explore[index] = false
-            return eval(Meta.parse("EXPLORE$(index)"))
+            return Action("EXPLORE$(index)")
         end
     end
     
     # If we have explored all deposits, greedily decide which one to mine that is allowed by the belief.
     scores = zeros(p.pomdp.n_deposits)
     for i in 1:p.pomdp.n_deposits
-        if can_explore_here(eval(Meta.parse("MINE$(i)")), b)
+        if can_explore_here(Action("MINE$(i)"), b)
             score = mean(b.deposit_dists[i])
         else
             score = -Inf
@@ -52,7 +55,11 @@ function POMDPs.action(p::EfficiencyPolicy, b::LiBelief)
     end
     _, best_mine = findmax(scores)
     
-    return eval(Meta.parse("MINE$(best_mine)"))
+    return Action("MINE$(best_mine)")
+end
+
+function POMDPs.updater(policy::EfficiencyPolicy)
+    return LiBeliefUpdater(policy.pomdp)
 end
 
 
@@ -64,14 +71,12 @@ end
 end
 
 function POMDPs.action(p::EfficiencyPolicyWithUncertainty, b::LiBelief)
-
-    #println("EfficiencyPolicyWithUncertainty actions list: $(actions(p.pomdp, b)) for $b")
-
+    
     # Explore all that needs exploring first
     for (index, to_explore) in enumerate(p.need_explore)
         if to_explore
             p.need_explore[index] = false
-            return eval(Meta.parse("EXPLORE$(index)"))
+            return (Action("EXPLORE$(index)"))
         end
     end
     
@@ -79,7 +84,7 @@ function POMDPs.action(p::EfficiencyPolicyWithUncertainty, b::LiBelief)
     # We will consider both the expected Lithium and the uncertainty in our decision.    
     scores = zeros(p.pomdp.n_deposits)
     for i in 1:p.pomdp.n_deposits
-        if can_explore_here(eval(Meta.parse("MINE$(i)")), b)
+        if can_explore_here(Action("MINE$(i)"), b)
             score = mean(b.deposit_dists[i])  - p.lambda * std(b.deposit_dists[i])
         else
             score = -Inf
@@ -87,7 +92,12 @@ function POMDPs.action(p::EfficiencyPolicyWithUncertainty, b::LiBelief)
         scores[i] = score
     end
     _, best_mine = findmax(scores)
-    return eval(Meta.parse("MINE$(best_mine)"))
+    return Action("MINE$(best_mine)")
+end
+
+
+function POMDPs.updater(policy::EfficiencyPolicyWithUncertainty)
+    return LiBeliefUpdater(policy.pomdp)
 end
 
 
@@ -102,7 +112,7 @@ function POMDPs.action(p::EmissionAwarePolicy, b::LiBelief)
     for (index, to_explore) in enumerate(p.need_explore)
         if to_explore
             p.need_explore[index] = false
-            return eval(Meta.parse("EXPLORE$(index)"))
+            return Action("EXPLORE$(index)")
         end
     end
     
@@ -112,7 +122,7 @@ function POMDPs.action(p::EmissionAwarePolicy, b::LiBelief)
 
     scores = zeros(p.pomdp.n_deposits)
     for i in 1:p.pomdp.n_deposits
-        if can_explore_here(eval(Meta.parse("MINE$(i)")), b)
+        if can_explore_here(Action("MINE$(i)"), b)
             score = mean(b.deposit_dists[i])/p.pomdp.CO2_emissions[i]
         else
             score = -Inf
@@ -122,5 +132,27 @@ function POMDPs.action(p::EmissionAwarePolicy, b::LiBelief)
     
     _, best_mine = findmax(scores)
     
-    return eval(Meta.parse("MINE$(best_mine)"))
+    return Action("MINE$(best_mine)")
 end
+
+function POMDPs.updater(policy::EmissionAwarePolicy)
+    return LiBeliefUpdater(policy.pomdp)
+end
+
+function POMDPs.updater(policy::POMCPOWPlanner{LiPOMDP, POMCPOW.POWNodeFilter, MaxUCB, typeof(estimate_value), Int64, Float64, POMCPOWSolver{Random.AbstractRNG, POMCPOW.var"#6#12"}})
+    return LiBeliefUpdater(policy.problem)
+end
+
+function POMDPs.updater(policy::MCTS.DPWPlanner{GenerativeBeliefMDP{LiPOMDP, LiBeliefUpdater, LiBelief{Normal{Float64}}, Action}, 
+                                           LiBelief{Normal{Float64}}, 
+                                           Action, 
+                                           MCTS.SolvedRolloutEstimator{EfficiencyPolicyWithUncertainty, Random.AbstractRNG}, 
+                                           RandomActionGenerator{Random.AbstractRNG}, MCTS.var"#18#22", Random.AbstractRNG})
+    return LiBeliefUpdater(policy.solved_estimate.policy.pomdp)
+end
+
+function POMDPs.updater(policy::MCTS.DPWPlanner{GenerativeBeliefMDP{LiPOMDP, LiBeliefUpdater, ContinueTerminalBehavior{LiPOMDP, LiBeliefUpdater}, LiBelief{Normal{Float64}}, Action}, LiBelief{Normal{Float64}}, Action, MCTS.SolvedRolloutEstimator{EfficiencyPolicyWithUncertainty, Random.AbstractRNG}, RandomActionGenerator{Random.AbstractRNG}, MCTS.var"#18#22", Random.AbstractRNG})
+    return LiBeliefUpdater(policy.solved_estimate.policy.pomdp)
+ end 
+
+ 
