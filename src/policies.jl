@@ -9,20 +9,25 @@ This file contains the multiple baseline policies to test our POMCPOW and MCTS-D
 =#
 
 #RANDOM POLICY -- selects a random action to take (from the available ones)
-struct RandomPolicy <: Policy
+struct RandPolicy <: Policy
     pomdp::LiPOMDP
 end
 
-function POMDPs.action(p::RandomPolicy, b::LiBelief)
+function POMDPs.action(p::RandPolicy, b::LiBelief)
+    # println(fieldnames(typeof(b)))
     potential_actions = actions(p.pomdp, b)
     #println("random actions list: $potential_actions for $b")
     return rand(potential_actions)
 end
 
-function POMDPs.updater(policy::RandomPolicy)
-    return LiBeliefUpdater(policy.pomdp)
+function POMDPs.action(p::RandPolicy, x::Deterministic{State})
+    potential_actions = actions(p.pomdp, x)
+    return rand(potential_actions)
 end
 
+function POMDPs.updater(policy::RandPolicy)
+    return LiBeliefUpdater(policy.pomdp)
+end
 
 #GREEDY EFFICIENCY POLICY -- explore all deposits first, then 
 @with_kw mutable struct EfficiencyPolicy <: Policy 
@@ -55,6 +60,10 @@ function POMDPs.action(p::EfficiencyPolicy, b::LiBelief)
     return eval(Meta.parse("MINE$(best_mine)"))
 end
 
+function POMDPs.updater(policy::EfficiencyPolicy)
+    return LiBeliefUpdater(policy.pomdp)
+end
+
 
 #GREEDY EFFICIENCY POLICY CONSIDERING UNCERTAINTY -- same idea as EfficiencyPolicy, but also considers uncertainty
 @with_kw mutable struct EfficiencyPolicyWithUncertainty <: Policy 
@@ -77,10 +86,10 @@ function POMDPs.action(p::EfficiencyPolicyWithUncertainty, b::LiBelief)
     
     # If we have explored all deposits, decide which one to mine that is allowed by the belief.
     # We will consider both the expected Lithium and the uncertainty in our decision.    
-    scores = zeros(p.pomdp.n_deposits)
-    for i in 1:p.pomdp.n_deposits
+    scores = zeros(p.pomdp.n)
+    for i in 1:p.pomdp.n
         if can_explore_here(eval(Meta.parse("MINE$(i)")), b)
-            score = mean(b.deposit_dists[i])  - p.lambda * std(b.deposit_dists[i])
+            score = mean(b.v_dists[i])  - p.lambda * std(b.v_dists[i])
         else
             score = -Inf
         end
@@ -88,6 +97,11 @@ function POMDPs.action(p::EfficiencyPolicyWithUncertainty, b::LiBelief)
     end
     _, best_mine = findmax(scores)
     return eval(Meta.parse("MINE$(best_mine)"))
+end
+
+
+function POMDPs.updater(policy::EfficiencyPolicyWithUncertainty)
+    return LiBeliefUpdater(policy.pomdp)
 end
 
 
@@ -123,4 +137,104 @@ function POMDPs.action(p::EmissionAwarePolicy, b::LiBelief)
     _, best_mine = findmax(scores)
     
     return eval(Meta.parse("MINE$(best_mine)"))
+end
+
+function POMDPs.updater(policy::EmissionAwarePolicy)
+    return LiBeliefUpdater(policy.pomdp)
+end
+
+function POMDPs.updater(policy::POMCPOWPlanner{LiPOMDP, POMCPOW.POWNodeFilter, MaxUCB, POMCPOW.RandomActionGenerator{Random.AbstractRNG}, typeof(estimate_value), Int64, Float64, POMCPOWSolver{Random.AbstractRNG, POMCPOW.var"#6#12"}})
+    return LiBeliefUpdater(policy.problem)
+end
+
+function POMDPs.updater(policy::MCTS.DPWPlanner{GenerativeBeliefMDP{LiPOMDP, LiBeliefUpdater, LiBelief{Normal{Float64}}, Action}, 
+                                           LiBelief{Normal{Float64}}, 
+                                           Action, 
+                                           MCTS.SolvedRolloutEstimator{EfficiencyPolicyWithUncertainty, Random.AbstractRNG}, 
+                                           RandomActionGenerator{Random.AbstractRNG}, MCTS.var"#18#22", Random.AbstractRNG})
+    return LiBeliefUpdater(policy.solved_estimate.policy.pomdp)
+end
+
+
+
+struct AusDomPolicy <: Policy
+    pomdp::LiPOMDP
+    t::Vector{Int}
+end
+
+function POMDPs.action(p::AusDomPolicy, b::LiBelief)
+    if b.t == p.t[1]
+        return MINE3
+    elseif b.t == p.t[2]
+        return MINE4
+    elseif b.t == p.t[3]
+        return MINE1
+    elseif b.t == p.t[4]
+        return MINE2
+    else
+        return DONOTHING
+    end
+end
+
+function POMDPs.action(p::AusDomPolicy, s::State)  # Changed from Deterministic{State}
+    if s.t == p.t[1]
+        return MINE3
+    elseif s.t == p.t[2]
+        return MINE4
+    elseif s.t == p.t[3]
+        return MINE1
+    elseif s.t == p.t[3]
+        return MINE2
+    else
+        return DONOTHING
+    end
+end
+
+function POMDPs.updater(policy::AusDomPolicy)
+    return LiBeliefUpdater(policy.pomdp)
+end
+
+
+
+
+
+struct HeuristicPolicy <: Policy
+    pomdp::LiPOMDP
+    t_mine::Vector{Int}
+    t_restore::Vector{Int}
+    t_explore::Vector{Vector{Int}}
+end
+
+function POMDPs.action(p::HeuristicPolicy, b::LiBelief)
+    if b.t == p.t_mine[1]
+        return MINE1
+    elseif b.t == p.t_mine[2]
+        return MINE2
+    elseif b.t == p.t_mine[3]
+        return MINE3
+    elseif b.t == p.t_mine[4]
+        return MINE4
+    elseif b.t == p.t_restore[1]
+        return RESTORE1
+    elseif b.t == p.t_restore[2]
+        return RESTORE2
+    elseif b.t == p.t_restore[3]
+        return RESTORE3
+    elseif b.t == p.t_restore[4]
+        return RESTORE4
+    elseif b.t in p.t_explore[1]
+        return EXPLORE1
+    elseif b.t in p.t_explore[2]
+        return EXPLORE2
+    elseif b.t in p.t_explore[3]
+        return EXPLORE3
+    elseif b.t in p.t_explore[4]
+        return EXPLORE4
+    else
+        return DONOTHING        
+    end
+end
+
+function POMDPs.updater(policy::HeuristicPolicy)
+    return LiBeliefUpdater(policy.pomdp)
 end
